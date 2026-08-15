@@ -24,11 +24,14 @@ let startValue = 0;
 let endValue = 8;
 let playing = false;
 let playStartedAt = 0;
-let pausedAt = 0;
+let pausedAt = totalDuration(project.segments);
 let animationFrame = 0;
-let activePlaybackIndex = -1;
+let activePlaybackIndex = project.segments.length - 1;
 let playerGeneration = 0;
 let playerReady = false;
+let sourceVideoPlaying = false;
+let activeVideoDuration = 0;
+let segmentDefinitionFrame = 0;
 let youtubePlayer: YouTubePlayer | null = null;
 let youtubeApiPromise: Promise<void> | null = null;
 let captureSlot: number | null = null;
@@ -39,6 +42,7 @@ let initialTimelineFramed = false;
 let arrangementScrollLeft = 0;
 const selectedMomentIds = new Set<string>();
 let suppressNextMomentClick = false;
+let suppressNextTimelineSeek = false;
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -193,15 +197,18 @@ function mixView() {
   return `
     <section class="workspace mix-workspace">
       <div class="editor-layout">
-        <section class="mock-player" style="--slot-color:${SLOT_COLORS[selectedSlot - 1]}">
-          ${source ? `<div id="youtube-player" class="youtube-player"></div>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
-        </section>
+        <div class="video-preview-column">
+          <section class="mock-player" style="--slot-color:${SLOT_COLORS[selectedSlot - 1]}">
+            ${source ? `<div id="youtube-player" class="youtube-player"></div>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
+          </section>
+          ${source ? segmentDefinitionRuler() : ""}
+        </div>
         <section class="segment-editor">
           <p class="eyebrow">SEGMENT FROM SOURCE ${selectedSlot}</p>
           <h2>${escapeHtml(source?.title ?? "Empty source")}</h2>
           ${source ? `<p class="mix-playback-status" role="status">Loading YouTube player…</p>` : ""}
           <div class="segment-controls">
-            <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · 0–9 scrub + mark · Space finish</button>
+            <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · 0–9 scrub + mark · Space start / finish</button>
             <div class="time-fields">
               <label>Start <span>seconds</span><input id="start-time" type="number" min="0" step="0.1" value="${startValue}" /></label>
               <span class="time-arrow">→</span>
@@ -212,7 +219,7 @@ function mixView() {
             <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
             <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
             <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
-            <p class="shortcut">Shortcuts: <kbd>←</kbd>/<kbd>→</kbd> scrub 1s · <kbd>0</kbd> start · <kbd>1</kbd>–<kbd>9</kbd> scrub + mark · <kbd>Space</kbd> finish · <kbd>Enter</kbd> add</p>
+            <p class="shortcut">Shortcuts: <kbd>←</kbd>/<kbd>→</kbd> scrub 1s · <kbd>0</kbd> start · <kbd>1</kbd>–<kbd>9</kbd> scrub + mark · <kbd>Space</kbd> start / finish · <kbd>Enter</kbd> add</p>
           </div>
         </section>
       </div>
@@ -229,8 +236,8 @@ function timelineView() {
   return `
     <section class="timeline-section">
       <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span>${timelineZoom}px/s</span><button id="zoom-in" aria-label="Zoom in">＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
-      <div class="timeline source-tracks">
-        <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels()}</div>
+      <div class="timeline source-tracks" style="--track-count:${sources.length}">
+        <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels(columnWidths)}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
         ${groupRegions(columnWidths)}
         ${project.segments.length ? `<button class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" type="button" aria-label="Drag arrangement preview head" aria-valuemin="0" aria-valuemax="${duration.toFixed(1)}" aria-valuenow="${elapsed.toFixed(1)}"></button>` : ""}
@@ -245,11 +252,34 @@ function selectionTools() {
   return `<div class="selection-tools" role="toolbar" aria-label="Selected moments"><span>${count} selected</span><button data-bulk-action="duplicate">Duplicate</button><button data-bulk-action="delete">Delete</button><button data-bulk-action="group" ${count < 2 ? "disabled" : ""}>Group</button><button data-bulk-action="ungroup">Ungroup</button></div>`;
 }
 
-function timeAxisLabels() {
+function segmentDefinitionRuler() {
+  const total = Math.max(activeVideoDuration, endValue, 1);
+  const startPercent = Math.min(100, Math.max(0, startValue / total * 100));
+  const endPercent = Math.min(100, Math.max(startPercent, endValue / total * 100));
+  return `<div class="segment-definition" aria-label="Segment from ${formatTime(startValue)} to ${formatTime(endValue)} of ${formatTime(total)}">
+    <div class="definition-labels"><span>Clip range</span><span>${formatTime(startValue)} → ${formatTime(endValue)} / ${formatTime(total)}</span></div>
+    <div class="definition-ruler"><i style="left:${startPercent}%;width:${endPercent - startPercent}%"></i><b class="definition-start" style="left:${startPercent}%"><span>${formatTime(startValue)}</span></b><b class="definition-end" style="left:${endPercent}%"><span>${formatTime(endValue)}</span></b></div>
+  </div>`;
+}
+
+function updateSegmentDefinitionRuler() {
+  const current = document.querySelector<HTMLElement>(".segment-definition");
+  if (!current) return;
+  const shell = document.createElement("div");
+  shell.innerHTML = segmentDefinitionRuler();
+  current.replaceWith(shell.firstElementChild!);
+}
+
+function timeAxisLabels(widths: number[]) {
   let elapsed = 0;
-  return project.segments.map((segment) => {
-    const label = `<span><i></i>${formatTimePrecise(elapsed)}</span>`;
+  let pixels = 0;
+  let lastLabelPixel = -Infinity;
+  return project.segments.map((segment, index) => {
+    const showLabel = index === 0 || pixels - lastLabelPixel >= 72;
+    const label = showLabel ? `<span style="grid-column:${index + 1}"><i></i>${formatTimePrecise(elapsed)}</span>` : "";
+    if (showLabel) lastLabelPixel = pixels;
     elapsed += segmentDuration(segment);
+    pixels += widths[index] + 6;
     return label;
   }).join("");
 }
@@ -361,6 +391,26 @@ function bindTimelineControls(root: ParentNode) {
     arrangementScrollLeft = (event.currentTarget as HTMLElement).scrollLeft;
   }, { passive: true });
   root.querySelector<HTMLElement>(".arrangement-head")?.addEventListener("pointerdown", beginArrangementScrub);
+  root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("click", seekArrangementFromTimelineClick);
+}
+
+function seekArrangementFromTimelineClick(event: MouseEvent) {
+  if (event.shiftKey || suppressNextTimelineSeek) return;
+  const target = event.target as HTMLElement;
+  if (target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment, .moment-gap, .time-axis")) return;
+  const tracks = event.currentTarget as HTMLElement;
+  const labelWidth = window.innerWidth <= 850 ? 105 : 155;
+  const position = Math.max(0, event.clientX - tracks.getBoundingClientRect().left + tracks.scrollLeft - labelWidth);
+  if (playing) {
+    playing = false;
+    cancelAnimationFrame(animationFrame);
+    youtubePlayer?.pauseVideo();
+    updatePlaybackButtons();
+  }
+  pausedAt = Math.min(totalDuration(project.segments), timelineElapsedAtPosition(position));
+  activePlaybackIndex = findSegmentIndex(pausedAt);
+  updatePlayUi(pausedAt);
+  cueArrangementAtPausedPosition(false);
 }
 
 function timelineElapsedAtPosition(position: number, widths = timelineColumnWidths()) {
@@ -470,7 +520,7 @@ function beginMarqueeSelection(event: PointerEvent) {
   if (event.button !== 0) return;
   const target = event.target as HTMLElement;
   const startedOnSegment = Boolean(target.closest(".segment"));
-  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment")) return;
+  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .track-label, .time-label, .trim-handle, .arrangement-head") || !target.closest(".source-tracks")) return;
 
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
@@ -525,7 +575,9 @@ function beginMarqueeSelection(event: PointerEvent) {
     }
     if (dragging) {
       suppressNextMomentClick = true;
+      suppressNextTimelineSeek = true;
       window.setTimeout(() => { suppressNextMomentClick = false; }, 0);
+      window.setTimeout(() => { suppressNextTimelineSeek = false; }, 0);
       refreshTimeline(false);
     }
   };
@@ -620,6 +672,7 @@ function updateTimeValues() {
   }
   const readout = document.querySelector<HTMLElement>(".duration-readout b");
   if (readout) readout.textContent = formatTime(endValue - startValue);
+  updateSegmentDefinitionRuler();
 }
 
 function addSegment() {
@@ -631,10 +684,25 @@ function addSegment() {
     render();
     return;
   }
-  project.segments.push({ id: crypto.randomUUID(), sourceId: source.id, sourceStartSeconds: startValue, sourceEndSeconds: endValue, lane: 0 });
+  const insertionIndex = insertionIndexAtHead();
+  const insertedDuration = endValue - startValue;
+  project.segments.splice(insertionIndex, 0, { id: crypto.randomUUID(), sourceId: source.id, sourceStartSeconds: startValue, sourceEndSeconds: endValue, lane: 0 });
+  pausedAt = segmentStart(insertionIndex) + insertedDuration;
+  activePlaybackIndex = findSegmentIndex(pausedAt);
   saveProject();
   message = "";
-  render();
+  refreshTimeline(false);
+  requestAnimationFrame(scrollArrangementToHead);
+}
+
+function insertionIndexAtHead() {
+  if (!project.segments.length || pausedAt <= 0) return 0;
+  let elapsed = 0;
+  for (let index = 0; index < project.segments.length; index += 1) {
+    elapsed += segmentDuration(project.segments[index]);
+    if (pausedAt < elapsed) return index + 1;
+  }
+  return project.segments.length;
 }
 
 function editSegment(action: string, id: string) {
@@ -729,6 +797,8 @@ function beginSegmentReorder(event: PointerEvent) {
     dropTarget?.classList.remove("drop-target", "drop-after");
     dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
     if (!dragging) return;
+    suppressNextTimelineSeek = true;
+    window.setTimeout(() => { suppressNextTimelineSeek = false; }, 0);
     if (dropTarget?.dataset.segment) reorderSegment(fromId, dropTarget.dataset.segment, movingIds, placeAfter);
   };
   const cancel = () => {
@@ -828,6 +898,8 @@ async function mountPlayerForCurrentView() {
   if (!source) return;
   const generation = ++playerGeneration;
   playerReady = false;
+  sourceVideoPlaying = false;
+  activeVideoDuration = 0;
   try {
     youtubePlayer?.destroy();
   } catch { /* The preceding render may already have removed its iframe. */ }
@@ -849,6 +921,8 @@ async function mountPlayerForCurrentView() {
         onReady: () => {
           if (generation !== playerGeneration) return;
           playerReady = true;
+          activeVideoDuration = Math.max(0, youtubePlayer?.getDuration() ?? 0);
+          updateSegmentDefinitionRuler();
           setPlaybackStatus(mode === "play" ? "Ready · sound on" : "Ready to preview with sound");
           if (mode === "play" && playing) {
             playStartedAt = performance.now();
@@ -862,9 +936,17 @@ async function mountPlayerForCurrentView() {
           }
         },
         onStateChange: (event: { data: number }) => {
+          activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer?.getDuration() ?? 0);
+          updateSegmentDefinitionRuler();
           if (event.data === 3) setPlaybackStatus("Buffering…");
-          if (event.data === 1) setPlaybackStatus(captureSlot === null ? "Playing with sound" : `Recording source ${captureSlot}`);
-          if (event.data === 2) setPlaybackStatus("Paused");
+          if (event.data === 1) {
+            sourceVideoPlaying = true;
+            setPlaybackStatus(captureSlot === null ? "Playing with sound" : `Recording source ${captureSlot}`);
+          }
+          if (event.data === 0 || event.data === 2) {
+            sourceVideoPlaying = false;
+            if (event.data === 2) setPlaybackStatus("Paused");
+          }
           restoreMixKeyboardFocus();
         },
         onError: (event: { data: number }) => {
@@ -916,18 +998,24 @@ function setBoundFromPlayer(bound: "start" | "end") {
 
 function finishLiveCapture(sourceEnd = youtubePlayer?.getCurrentTime()) {
   if (captureSlot === null) return;
+  cancelAnimationFrame(segmentDefinitionFrame);
   const source = sourceForSlot(captureSlot);
   const end = Number(sourceEnd);
   if (source && Number.isFinite(end) && end > captureSourceStart) {
-    project.segments.push({
+    const insertionIndex = insertionIndexAtHead();
+    const insertedDuration = Number(end.toFixed(1)) - captureSourceStart;
+    project.segments.splice(insertionIndex, 0, {
       id: crypto.randomUUID(),
       sourceId: source.id,
       sourceStartSeconds: captureSourceStart,
       sourceEndSeconds: Number(end.toFixed(1)),
       lane: 0,
     });
+    pausedAt = segmentStart(insertionIndex) + insertedDuration;
+    activePlaybackIndex = findSegmentIndex(pausedAt);
     saveProject();
     refreshTimeline(false);
+    requestAnimationFrame(scrollArrangementToHead);
   }
   captureSlot = null;
 }
@@ -952,6 +1040,19 @@ function scrollArrangementToEnd() {
   if (tracks) {
     arrangementScrollLeft = Math.max(0, tracks.scrollWidth - tracks.clientWidth);
     tracks.scrollLeft = arrangementScrollLeft;
+  }
+}
+
+function scrollArrangementToHead() {
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (!tracks) return;
+  const labelWidth = window.innerWidth <= 850 ? 105 : 155;
+  const headX = timelinePosition(pausedAt) + labelWidth;
+  const visibleLeft = tracks.scrollLeft + labelWidth;
+  const visibleRight = tracks.scrollLeft + tracks.clientWidth;
+  if (headX < visibleLeft + 30 || headX > visibleRight - 30) {
+    arrangementScrollLeft = Math.max(0, headX - tracks.clientWidth + 80);
+    tracks.scrollTo({ left: arrangementScrollLeft, behavior: "smooth" });
   }
 }
 
@@ -998,7 +1099,25 @@ function beginLiveCapture(slot: number) {
   captureSourceStart = Math.max(0, startValue);
   youtubePlayer.seekTo(captureSourceStart, true);
   youtubePlayer.playVideo();
+  animateSegmentDefinition();
   setPlaybackStatus(`Recording source ${slot} · press a number to trigger the next moment`);
+}
+
+function animateSegmentDefinition() {
+  cancelAnimationFrame(segmentDefinitionFrame);
+  const update = () => {
+    if (captureSlot === null || !youtubePlayer) return;
+    const current = youtubePlayer.getCurrentTime();
+    activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer.getDuration() || 0, current);
+    endValue = Math.max(captureSourceStart, current);
+    const endInput = document.querySelector<HTMLInputElement>("#end-time");
+    if (endInput) endInput.value = endValue.toFixed(1);
+    const readout = document.querySelector<HTMLElement>(".duration-readout b");
+    if (readout) readout.textContent = formatTime(endValue - captureSourceStart);
+    updateSegmentDefinitionRuler();
+    segmentDefinitionFrame = requestAnimationFrame(update);
+  };
+  segmentDefinitionFrame = requestAnimationFrame(update);
 }
 
 function markMomentAtScrubPoint(key: number) {
@@ -1018,8 +1137,11 @@ function markMomentAtScrubPoint(key: number) {
   captureSourceStart = target;
   startValue = target;
   endValue = Math.min(duration, target + 8);
+  activeVideoDuration = duration;
+  updateSegmentDefinitionRuler();
   youtubePlayer.seekTo(target, true);
   youtubePlayer.playVideo();
+  animateSegmentDefinition();
   setPlaybackStatus(`Moment starts at ${formatTime(target)} · press another number to set its end`);
 }
 
@@ -1040,6 +1162,33 @@ function stopLiveCapture() {
   pendingCaptureSlot = null;
   youtubePlayer?.pauseVideo();
   render();
+}
+
+function toggleLiveCapture() {
+  if (sourceVideoPlaying) {
+    if (captureSlot !== null) finishLiveCapture();
+    pendingCaptureSlot = null;
+    cancelAnimationFrame(segmentDefinitionFrame);
+    youtubePlayer?.pauseVideo();
+    sourceVideoPlaying = false;
+    setPlaybackStatus("Paused · press Space to resume and start a new moment");
+    return;
+  }
+  const source = sourceForSlot(selectedSlot);
+  if (!source || !youtubePlayer || !playerReady) {
+    if (!source) {
+      message = "Choose a track with a video before recording a moment.";
+      render();
+    } else setPlaybackStatus("The active video is still loading");
+    return;
+  }
+  const current = Math.max(0, youtubePlayer.getCurrentTime());
+  startValue = current;
+  endValue = current;
+  activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer.getDuration() || 0);
+  updateSegmentDefinitionRuler();
+  beginLiveCapture(selectedSlot);
+  sourceVideoPlaying = true;
 }
 
 function playActiveSegment() {
@@ -1200,7 +1349,7 @@ document.addEventListener("keydown", (event) => {
   if (/^[1-9]$/.test(event.key) && mode === "mix") { markMomentAtScrubPoint(Number(event.key)); return; }
   if (/^[1-9]$/.test(event.key) && mode === "browse") { selectSlot(Number(event.key)); return; }
   if (mode === "mix" && event.key === "Enter") addSegment();
-  if (mode === "mix" && event.key === " ") { event.preventDefault(); stopLiveCapture(); return; }
+  if (mode === "mix" && event.key === " ") { event.preventDefault(); toggleLiveCapture(); return; }
   if (mode === "play" && event.key === " ") { event.preventDefault(); togglePlayback(); }
   if (event.key === "0") { stopPlayback(); render(); }
 });
