@@ -34,6 +34,8 @@ let youtubeApiPromise: Promise<void> | null = null;
 let captureSlot: number | null = null;
 let captureSourceStart = 0;
 let pendingCaptureSlot: number | null = null;
+let timelineZoom = 18;
+const selectedMomentIds = new Set<string>();
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -113,7 +115,10 @@ function render() {
       <main>${mode === "browse" ? browseView() : mode === "mix" ? mixView() : playView()}</main>
     </div>`;
   bindEvents();
-  queueMicrotask(mountPlayerForCurrentView);
+  queueMicrotask(() => {
+    mountPlayerForCurrentView();
+    if (mode === "mix") scrollArrangementToEnd();
+  });
 }
 
 function browseView() {
@@ -210,23 +215,60 @@ function mixView() {
 function timelineView() {
   const duration = totalDuration(project.segments);
   const sources = [...project.sources].sort((a, b) => a.slot - b.slot);
-  const columns = project.segments.map((segment) => `${Math.max(0.1, segmentDuration(segment))}fr`).join(" ");
+  const columnWidths = project.segments.map((segment) => Math.max(36, segmentDuration(segment) * timelineZoom));
+  const columns = columnWidths.map((width) => `${width}px`).join(" ");
+  const elapsed = currentElapsed();
   return `
     <section class="timeline-section">
-      <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div>${project.segments.length ? `<button class="primary" data-mode="play">Play mix <span>▶</span></button>` : ""}</div>
+      <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span>${timelineZoom}px/s</span><button id="zoom-in" aria-label="Zoom in">＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
       <div class="timeline source-tracks">
+        <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels()}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
+        ${project.segments.length ? `<i class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" aria-hidden="true"></i>` : ""}
       </div>
       <button class="add-track-video" data-mode="browse"><span>＋</span> Add track video</button>
     </section>`;
+}
+
+function selectionTools() {
+  const count = selectedMomentIds.size;
+  if (!count) return "";
+  return `<div class="selection-tools" role="toolbar" aria-label="Selected moments"><span>${count} selected</span><button data-bulk-action="duplicate">Duplicate</button><button data-bulk-action="delete">Delete</button><button data-bulk-action="group" ${count < 2 ? "disabled" : ""}>Group</button><button data-bulk-action="ungroup">Ungroup</button></div>`;
+}
+
+function timeAxisLabels() {
+  let elapsed = 0;
+  return project.segments.map((segment) => {
+    const label = `<span><i></i>${formatTimePrecise(elapsed)}</span>`;
+    elapsed += segmentDuration(segment);
+    return label;
+  }).join("");
+}
+
+function formatTimePrecise(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
+}
+
+function timelinePosition(elapsed: number, widths = project.segments.map((segment) => Math.max(36, segmentDuration(segment) * timelineZoom))) {
+  let timeCursor = 0;
+  let pixelCursor = 0;
+  for (let index = 0; index < project.segments.length; index += 1) {
+    const duration = segmentDuration(project.segments[index]);
+    if (elapsed <= timeCursor + duration) return pixelCursor + widths[index] * Math.max(0, elapsed - timeCursor) / duration;
+    timeCursor += duration;
+    pixelCursor += widths[index] + 6;
+  }
+  return pixelCursor;
 }
 
 function segmentCard(segment: Segment, index: number) {
   const source = sourceForSegment(segment);
   const slot = source?.slot ?? 1;
   const duration = segmentDuration(segment);
-  return `<article class="segment" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}">
+  return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
+    ${segment.groupId ? `<span class="group-badge" title="Grouped moment">G</span>` : ""}
     <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}</small></span>
     <button data-action="duplicate" data-id="${segment.id}" aria-label="Duplicate segment">⧉</button>
     <button data-action="delete" data-id="${segment.id}" aria-label="Delete segment">×</button>
@@ -275,6 +317,13 @@ function bindEvents() {
   bindTimelineEvents(document);
   document.querySelector("#play-toggle")?.addEventListener("click", togglePlayback);
   document.querySelector("#stop")?.addEventListener("click", () => { stopPlayback(); render(); });
+  bindTimelineControls(document);
+}
+
+function bindTimelineControls(root: ParentNode) {
+  root.querySelector("#arrangement-play")?.addEventListener("click", toggleArrangementPlayback);
+  root.querySelector("#zoom-out")?.addEventListener("click", () => changeTimelineZoom(-4));
+  root.querySelector("#zoom-in")?.addEventListener("click", () => changeTimelineZoom(4));
 }
 
 function bindTimelineEvents(root: ParentNode) {
@@ -282,7 +331,60 @@ function bindTimelineEvents(root: ParentNode) {
   root.querySelectorAll<HTMLButtonElement>("[data-trim]").forEach((handle) => handle.addEventListener("pointerdown", beginTrim));
   root.querySelectorAll<HTMLElement>(".segment[data-segment]").forEach((item) => {
     item.addEventListener("pointerdown", beginSegmentReorder);
+    item.addEventListener("click", selectMoment);
   });
+  root.querySelectorAll<HTMLElement>("[data-bulk-action]").forEach((button) => button.addEventListener("click", () => bulkEditMoments(button.dataset.bulkAction!)));
+}
+
+function selectMoment(event: MouseEvent) {
+  if ((event.target as HTMLElement).closest("button")) return;
+  const card = event.currentTarget as HTMLElement;
+  if (card.dataset.dragged === "true") {
+    delete card.dataset.dragged;
+    return;
+  }
+  const id = card.dataset.segment;
+  if (!id) return;
+  const segment = project.segments.find((item) => item.id === id);
+  if (!event.shiftKey) {
+    selectedMomentIds.clear();
+    if (segment?.groupId) project.segments.filter((item) => item.groupId === segment.groupId).forEach((item) => selectedMomentIds.add(item.id));
+    else selectedMomentIds.add(id);
+  } else if (selectedMomentIds.has(id)) selectedMomentIds.delete(id);
+  else selectedMomentIds.add(id);
+  refreshTimeline(false);
+}
+
+function bulkEditMoments(action: string) {
+  const selected = project.segments.filter((segment) => selectedMomentIds.has(segment.id));
+  if (!selected.length) return;
+  if (action === "delete") {
+    project.segments = project.segments.filter((segment) => !selectedMomentIds.has(segment.id));
+    selectedMomentIds.clear();
+  }
+  if (action === "duplicate") {
+    const lastIndex = Math.max(...selected.map((segment) => project.segments.indexOf(segment)));
+    const sharedGroup = selected[0].groupId && selected.every((segment) => segment.groupId === selected[0].groupId);
+    const duplicateGroup = sharedGroup ? crypto.randomUUID() : undefined;
+    const copies = selected.map((segment) => ({ ...segment, id: crypto.randomUUID(), groupId: duplicateGroup }));
+    project.segments.splice(lastIndex + 1, 0, ...copies);
+    selectedMomentIds.clear();
+    copies.forEach((segment) => selectedMomentIds.add(segment.id));
+  }
+  if (action === "group" && selected.length > 1) {
+    const groupId = crypto.randomUUID();
+    selected.forEach((segment) => { segment.groupId = groupId; });
+  }
+  if (action === "ungroup") selected.forEach((segment) => { delete segment.groupId; });
+  cleanupMomentGroups();
+  saveProject();
+  refreshTimeline(action === "duplicate");
+}
+
+function cleanupMomentGroups() {
+  const counts = new Map<string, number>();
+  project.segments.forEach((segment) => { if (segment.groupId) counts.set(segment.groupId, (counts.get(segment.groupId) ?? 0) + 1); });
+  project.segments.forEach((segment) => { if (segment.groupId && (counts.get(segment.groupId) ?? 0) < 2) delete segment.groupId; });
 }
 
 function selectSlot(slot: number) {
@@ -350,20 +452,28 @@ function addSegment() {
 function editSegment(action: string, id: string) {
   const index = project.segments.findIndex((segment) => segment.id === id);
   if (index < 0) return;
-  if (action === "delete") project.segments.splice(index, 1);
+  if (action === "delete") {
+    project.segments.splice(index, 1);
+    selectedMomentIds.delete(id);
+  }
   if (action === "duplicate") project.segments.splice(index + 1, 0, { ...project.segments[index], id: crypto.randomUUID() });
+  cleanupMomentGroups();
   saveProject();
   render();
 }
 
 function reorderSegment(fromId: string, toId: string) {
-  const from = project.segments.findIndex((segment) => segment.id === fromId);
-  const to = project.segments.findIndex((segment) => segment.id === toId);
-  if (from < 0 || to < 0 || from === to) return;
-  const [moved] = project.segments.splice(from, 1);
-  project.segments.splice(to, 0, moved);
+  const fromSegment = project.segments.find((segment) => segment.id === fromId);
+  if (!fromSegment || !project.segments.some((segment) => segment.id === toId)) return;
+  const moving = fromSegment.groupId ? project.segments.filter((segment) => segment.groupId === fromSegment.groupId) : [fromSegment];
+  if (moving.some((segment) => segment.id === toId)) return;
+  const movingIds = new Set(moving.map((segment) => segment.id));
+  const remaining = project.segments.filter((segment) => !movingIds.has(segment.id));
+  const targetIndex = remaining.findIndex((segment) => segment.id === toId);
+  remaining.splice(targetIndex < 0 ? remaining.length : targetIndex, 0, ...moving);
+  project.segments = remaining;
   saveProject();
-  if (mode === "mix") refreshTimeline();
+  if (mode === "mix") refreshTimeline(false);
   else render();
 }
 
@@ -379,6 +489,7 @@ function beginSegmentReorder(event: PointerEvent) {
   const move = (moveEvent: PointerEvent) => {
     if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) > 6) {
       dragging = true;
+      card.dataset.dragged = "true";
       card.classList.add("dragging");
     }
   };
@@ -582,12 +693,12 @@ function finishLiveCapture(sourceEnd = youtubePlayer?.getCurrentTime()) {
       lane: 0,
     });
     saveProject();
-    refreshTimeline();
+    refreshTimeline(true);
   }
   captureSlot = null;
 }
 
-function refreshTimeline() {
+function refreshTimeline(scrollToEnd = false) {
   if (mode !== "mix") return;
   const current = document.querySelector<HTMLElement>(".timeline-section");
   if (!current) return;
@@ -597,6 +708,18 @@ function refreshTimeline() {
   next.querySelectorAll<HTMLElement>("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode as Mode)));
   next.querySelectorAll<HTMLElement>("[data-slot]").forEach((button) => button.addEventListener("click", () => selectSlot(Number(button.dataset.slot))));
   bindTimelineEvents(next);
+  bindTimelineControls(next);
+  if (scrollToEnd) requestAnimationFrame(scrollArrangementToEnd);
+}
+
+function scrollArrangementToEnd() {
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (tracks) tracks.scrollLeft = Math.max(0, tracks.scrollWidth - tracks.clientWidth);
+}
+
+function changeTimelineZoom(delta: number) {
+  timelineZoom = Math.max(6, Math.min(54, timelineZoom + delta));
+  refreshTimeline(true);
 }
 
 function restoreMixKeyboardFocus() {
@@ -629,7 +752,7 @@ function markMomentAtScrubPoint(key: number) {
     return;
   }
   const target = Number((duration * key / 10).toFixed(1));
-  finishLiveCapture(target);
+  finishLiveCapture(youtubePlayer.getCurrentTime());
   captureSlot = selectedSlot;
   captureSourceStart = target;
   startValue = target;
@@ -684,6 +807,29 @@ function updatePlayUi(elapsed: number) {
   }
   const progress = document.querySelector<HTMLElement>(".progress i");
   if (progress) progress.style.width = `${total ? Math.min(100, elapsed / total * 100) : 0}%`;
+  const head = document.querySelector<HTMLElement>(".arrangement-head");
+  if (head) {
+    head.style.setProperty("--head-x", `${timelinePosition(elapsed)}px`);
+    head.classList.toggle("playing", playing);
+    const tracks = head.closest<HTMLElement>(".source-tracks");
+    if (tracks && playing) {
+      const headX = timelinePosition(elapsed) + 155;
+      if (headX > tracks.scrollLeft + tracks.clientWidth - 80) tracks.scrollLeft = headX - tracks.clientWidth + 80;
+    }
+  }
+}
+
+function toggleArrangementPlayback() {
+  if (captureSlot !== null) stopLiveCapture();
+  togglePlayback();
+  updatePlaybackButtons();
+}
+
+function updatePlaybackButtons() {
+  const transport = document.querySelector<HTMLButtonElement>("#play-toggle");
+  if (transport) transport.textContent = playing ? "Ⅱ" : "▶";
+  const arrangement = document.querySelector<HTMLButtonElement>("#arrangement-play");
+  if (arrangement) arrangement.innerHTML = playing ? `Pause <span>Ⅱ</span>` : `Play arrangement <span>▶</span>`;
 }
 
 function togglePlayback() {
@@ -692,8 +838,7 @@ function togglePlayback() {
     playing = false;
     cancelAnimationFrame(animationFrame);
     youtubePlayer?.pauseVideo();
-    const button = document.querySelector<HTMLButtonElement>("#play-toggle");
-    if (button) button.textContent = "▶";
+    updatePlaybackButtons();
     updatePerformanceLabel("Paused", false);
     setPlaybackStatus("Paused");
     return;
@@ -703,8 +848,7 @@ function togglePlayback() {
   playing = true;
   playStartedAt = performance.now();
   if (playerReady) playActiveSegment();
-  const button = document.querySelector<HTMLButtonElement>("#play-toggle");
-  if (button) button.textContent = "Ⅱ";
+  updatePlaybackButtons();
   updatePerformanceLabel("Playing", true);
   tick();
 }
@@ -725,8 +869,7 @@ function tick() {
     pausedAt = totalDuration(project.segments);
     youtubePlayer?.stopVideo();
     updatePlayUi(pausedAt);
-    const button = document.querySelector<HTMLButtonElement>("#play-toggle");
-    if (button) button.textContent = "▶";
+    updatePlaybackButtons();
     updatePerformanceLabel("Complete", false);
     setPlaybackStatus("Mix complete");
     return;

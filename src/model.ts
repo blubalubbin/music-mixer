@@ -14,6 +14,7 @@ export type Segment = {
   sourceStartSeconds: number;
   sourceEndSeconds: number;
   lane: 0 | 1;
+  groupId?: string;
 };
 
 export type MixProject = {
