@@ -60,21 +60,49 @@ main{min-height:0;overflow:hidden}
 .picker-grid{min-height:0}
 .preview-card,.preview-card img,.preview-empty{min-height:0;height:min(48vh,430px)}
 .source-dock{margin-top:0}
-.mix-workspace{display:grid;grid-template-rows:minmax(0,1fr) minmax(110px,auto);gap:clamp(8px,1.5vh,20px);padding-top:clamp(10px,1.5vh,22px);min-width:0;max-width:100%}
+.mix-workspace{--mix-gap:clamp(8px,1.5vh,20px);display:grid;grid-template-rows:minmax(300px,1fr) minmax(0,min(70%,calc(100% - 300px - var(--mix-gap))));gap:var(--mix-gap);padding-top:clamp(10px,1.5vh,22px);min-width:0;max-width:100%}
 .mix-header,.source-strip,.timeline-section{margin:0}
 .mix-header h1{font-size:clamp(30px,4vh,48px)}
 .editor-layout{min-height:0;min-width:0;max-width:100%}
 .editor-layout>*{min-width:0}
 .mock-player{min-height:0}
 .mock-player .youtube-player,.mock-player .youtube-player iframe{min-height:0;height:100%}
-.segment-editor{padding:clamp(18px,2.5vh,34px);overflow:hidden}
-.segment-editor h2{margin-bottom:clamp(12px,2vh,24px)}
+.mix-workspace .editor-layout{grid-template-columns:400px minmax(0,1fr);align-items:stretch}
+.mix-workspace .mock-player{width:400px;height:100%;min-width:400px;min-height:300px}
+.mix-workspace .mock-player .youtube-player,.mix-workspace .mock-player .youtube-player iframe{width:400px;height:100%;min-width:400px;min-height:300px}
+.mix-workspace .no-source{width:400px;height:100%;min-height:300px;padding:12px}
+.mix-workspace .no-source>span{font-size:48px}
+.mix-playback-status{margin:-14px 0 16px;color:#777;font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em}
+.segment-editor{height:100%;padding:clamp(14px,2vh,26px);overflow:hidden;display:grid;grid-template-rows:auto auto auto minmax(0,1fr);gap:clamp(4px,.8vh,9px)}
+.segment-editor>.eyebrow,.segment-editor>h2,.segment-editor>.mix-playback-status{margin:0}
+.segment-editor h2{font-size:clamp(18px,2.5vh,25px)}
+.segment-controls{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"keyboard keyboard" "times times" "duration duration" "error error" "bounds bounds" "preview add" "shortcut shortcut";grid-template-rows:minmax(22px,.55fr) minmax(48px,1.2fr) minmax(22px,.55fr) auto minmax(28px,.7fr) minmax(32px,.8fr) auto;gap:clamp(4px,.65vh,8px);align-items:stretch}
+.segment-controls .keyboard-capture{grid-area:keyboard}
+.segment-controls .time-fields{grid-area:times}
+.segment-controls .duration-readout{grid-area:duration}
+.segment-controls .form-error{grid-area:error}
+.segment-controls .bound-buttons{grid-area:bounds}
+.segment-controls .preview-button{grid-area:preview}
+.segment-controls .primary.wide{grid-area:add}
+.segment-controls .shortcut{grid-area:shortcut}
+.segment-controls .keyboard-capture,.segment-controls .bound-buttons,.segment-controls .preview-button,.segment-controls .primary,.segment-controls .shortcut,.segment-controls .duration-readout{margin:0;min-height:0}
+.segment-controls .form-error{min-height:0;margin:0;font-size:10px}
+.segment-controls .keyboard-capture,.segment-controls .preview-button,.segment-controls .primary,.segment-controls .bound-buttons button{height:100%;padding-block:clamp(5px,1vh,11px)}
+.segment-controls .time-fields{min-height:0;align-items:stretch}
+.segment-controls .time-fields label{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.segment-controls .time-fields label span{display:inline;margin:0 0 3px 5px}
+.segment-controls .time-fields input{height:100%;min-height:0;padding:clamp(6px,1vh,12px)}
+.segment-controls .time-arrow{align-self:center;padding:12px 0 0}
+.segment-controls .duration-readout{align-items:center;padding:clamp(5px,.8vh,10px) 0}
+.segment-controls .shortcut{align-self:center}
+.segment-controls .preview-button,.segment-controls .primary.wide{width:100%;justify-content:center;text-align:center}
+.segment-controls .primary.wide span{margin-left:10px}
 .duration-readout{margin-top:clamp(10px,1.5vh,20px);padding:clamp(10px,1.5vh,16px) 0}
-.timeline-section{min-height:0;min-width:0;max-width:100%;overflow:hidden}
+.timeline-section{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0;min-width:0;max-width:100%;overflow:hidden}
 .timeline-heading{margin-bottom:8px;min-width:0;max-width:100%;gap:12px;flex-wrap:wrap}
 .timeline-heading .eyebrow{margin-bottom:3px}
 .timeline-heading h2{font-size:16px}
-.timeline.source-tracks{position:relative;display:grid;grid-template-columns:150px max-content;grid-template-rows:24px;grid-auto-rows:58px;gap:5px;width:100%;max-width:100%;min-width:0;min-height:0;max-height:min(34vh,310px);height:auto;padding:5px;overflow:auto;background:#0b0c0b;scroll-behavior:smooth}
+.timeline.source-tracks{position:relative;display:grid;grid-template-columns:150px max-content;grid-template-rows:24px;grid-auto-rows:58px;gap:5px;width:100%;max-width:100%;min-width:0;min-height:0;max-height:none;height:100%;padding:5px;overflow:auto;background:#0b0c0b;scroll-behavior:smooth}
 .track-label{position:sticky;left:0;z-index:7;display:grid;grid-template-columns:30px minmax(0,1fr);align-items:center;gap:8px;border:0;border-left:3px solid transparent;background:#151615;color:#777;padding:7px;text-align:left;min-width:0}
 .track-label:hover,.track-label.selected{border-left-color:var(--slot-color);color:#fff;background:#1c1d1c}
 .track-label b{width:28px;height:28px;display:grid;place-items:center;background:var(--slot-color);color:#111;font:11px DM Mono}
@@ -84,9 +112,10 @@ main{min-height:0;overflow:hidden}
 .time-axis{display:grid;gap:6px;min-width:max-content;border-bottom:1px solid #3a3b38;color:#777;font:7px DM Mono}
 .time-axis>span{position:relative;white-space:nowrap;padding-left:3px}
 .time-axis>span i{position:absolute;left:0;bottom:-1px;width:1px;height:7px;background:#777}
-.arrangement-head{position:absolute;z-index:5;top:5px;bottom:5px;left:calc(155px + var(--head-x));width:2px;background:#f5f1e8;pointer-events:none;box-shadow:0 0 8px #000}
-.arrangement-head::before{content:"";position:absolute;left:-4px;top:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid #f5f1e8}
-.arrangement-head.playing{background:#ff6047}.arrangement-head.playing::before{border-top-color:#ff6047}
+.arrangement-head{position:absolute;z-index:9;top:5px;bottom:5px;left:calc(148px + var(--head-x));width:14px;border:0;padding:0;background:transparent;cursor:ew-resize;touch-action:none}
+.arrangement-head::after{content:"";position:absolute;left:6px;top:0;bottom:0;width:2px;background:#f5f1e8;box-shadow:0 0 8px #000}
+.arrangement-head::before{content:"";position:absolute;left:2px;top:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid #f5f1e8}
+.arrangement-head:hover::after,.arrangement-head.dragging::after{width:4px;left:5px}.arrangement-head.playing::after{background:#ff6047}.arrangement-head.playing::before{border-top-color:#ff6047}
 .moment-gap{display:block;min-width:0;background:#0e0f0e;border:1px dashed #20211f}
 .track-empty{margin:auto;color:#42433f;font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em}
 .segment{position:relative;width:100%;min-width:0;overflow:hidden;display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-rows:1fr;padding:7px 7px 15px;border-top:0;border-left:4px solid var(--slot-color);gap:4px;cursor:grab;user-select:none;-webkit-user-select:none}
@@ -131,6 +160,11 @@ main{min-height:0;overflow:hidden}
 }
 
 @media(max-width:850px){
+  .mix-workspace .editor-layout{grid-template-columns:400px minmax(0,1fr)}
+  .mix-workspace .mock-player{justify-self:center}
+}
+
+@media(max-width:850px){
   .workspace{height:100%;overflow:hidden;padding-top:10px;padding-bottom:10px}
   .browse-workspace,.mix-workspace,.picker-workspace,.play-workspace{display:grid}
   .source-grid{grid-template-rows:repeat(5,minmax(0,1fr))}
@@ -139,8 +173,8 @@ main{min-height:0;overflow:hidden}
   .section-heading .lede,.mix-header>p{display:none}
   .editor-layout{grid-template-columns:1fr 1fr;min-height:0}
   .source-strip{grid-template-columns:repeat(9,1fr)}
-  .timeline.source-tracks{grid-template-columns:100px max-content;grid-auto-rows:50px;max-height:28vh}
-  .arrangement-head{left:calc(105px + var(--head-x))}
+  .timeline.source-tracks{grid-template-columns:100px max-content;grid-auto-rows:50px;max-height:none}
+  .arrangement-head{left:calc(98px + var(--head-x))}
   .up-next{min-height:0}
 }
 

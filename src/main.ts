@@ -42,6 +42,7 @@ const selectedMomentIds = new Set<string>();
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
   loadVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
+  cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
   playVideo(): void;
   pauseVideo(): void;
   stopVideo(): void;
@@ -173,7 +174,7 @@ function sourcePicker(slot: number) {
             <div class="url-row"><input id="youtube-url" name="url" type="text" autocomplete="off" placeholder="https://youtu.be/…" value="${source?.originalUrl ?? ""}" /><button class="primary" type="submit">Use video</button></div>
             <label for="source-title">Your label <span>optional</span></label>
             <input id="source-title" name="title" type="text" maxlength="60" placeholder="e.g. Opening drums" value="${source?.title ?? ""}" />
-            ${message ? `<p class="form-error" role="alert">${escapeHtml(message)}</p>` : ""}
+            <p class="form-error" aria-live="polite">${message ? escapeHtml(message) : ""}</p>
           </form>
           <p class="fine-print">Playback uses YouTube’s official embedded player. Some private, removed, age-restricted, or embedding-disabled videos may not play here.</p>
         </div>
@@ -192,23 +193,26 @@ function mixView() {
     <section class="workspace mix-workspace">
       <div class="editor-layout">
         <section class="mock-player" style="--slot-color:${SLOT_COLORS[selectedSlot - 1]}">
-          ${source ? `<div id="youtube-player" class="youtube-player"></div><span class="mock-badge">YouTube preview · sound on</span>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
+          ${source ? `<div id="youtube-player" class="youtube-player"></div>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
         </section>
         <section class="segment-editor">
           <p class="eyebrow">SEGMENT FROM SOURCE ${selectedSlot}</p>
           <h2>${escapeHtml(source?.title ?? "Empty source")}</h2>
-          <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · 1–9 scrub + mark · 0 / Space finish</button>
-          <div class="time-fields">
-            <label>Start <span>seconds</span><input id="start-time" type="number" min="0" step="0.1" value="${startValue}" /></label>
-            <span class="time-arrow">→</span>
-            <label>End <span>seconds</span><input id="end-time" type="number" min="0" step="0.1" value="${endValue}" /></label>
+          ${source ? `<p class="mix-playback-status" role="status">Loading YouTube player…</p>` : ""}
+          <div class="segment-controls">
+            <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · 0–9 scrub + mark · Space finish</button>
+            <div class="time-fields">
+              <label>Start <span>seconds</span><input id="start-time" type="number" min="0" step="0.1" value="${startValue}" /></label>
+              <span class="time-arrow">→</span>
+              <label>End <span>seconds</span><input id="end-time" type="number" min="0" step="0.1" value="${endValue}" /></label>
+            </div>
+            <div class="duration-readout"><span>Moment length</span><b>${formatTime(endValue - startValue)}</b></div>
+            ${message ? `<p class="form-error" role="alert">${escapeHtml(message)}</p>` : ""}
+            <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
+            <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
+            <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
+            <p class="shortcut">Shortcuts: <kbd>←</kbd>/<kbd>→</kbd> scrub 1s · <kbd>0</kbd> start · <kbd>1</kbd>–<kbd>9</kbd> scrub + mark · <kbd>Space</kbd> finish · <kbd>Enter</kbd> add</p>
           </div>
-          <div class="duration-readout"><span>Moment length</span><b>${formatTime(endValue - startValue)}</b></div>
-          ${message ? `<p class="form-error" role="alert">${escapeHtml(message)}</p>` : ""}
-          <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
-          <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
-          <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
-          <p class="shortcut">Shortcuts: <kbd>1</kbd>–<kbd>9</kbd> scrub to 10%–90% + mark · <kbd>Space</kbd> finish · <kbd>Enter</kbd> add</p>
         </section>
       </div>
       ${timelineView()}
@@ -227,7 +231,7 @@ function timelineView() {
       <div class="timeline source-tracks">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels()}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
-        ${project.segments.length ? `<i class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" aria-hidden="true"></i>` : ""}
+        ${project.segments.length ? `<button class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" type="button" aria-label="Drag arrangement preview head" aria-valuemin="0" aria-valuemax="${duration.toFixed(1)}" aria-valuenow="${elapsed.toFixed(1)}"></button>` : ""}
       </div>
       <button class="add-track-video" data-mode="browse"><span>＋</span> Add track video</button>
     </section>`;
@@ -334,6 +338,76 @@ function bindTimelineControls(root: ParentNode) {
   root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("scroll", (event) => {
     arrangementScrollLeft = (event.currentTarget as HTMLElement).scrollLeft;
   }, { passive: true });
+  root.querySelector<HTMLElement>(".arrangement-head")?.addEventListener("pointerdown", beginArrangementScrub);
+}
+
+function timelineElapsedAtPosition(position: number, widths = timelineColumnWidths()) {
+  let timeCursor = 0;
+  let pixelCursor = 0;
+  for (let index = 0; index < project.segments.length; index += 1) {
+    const duration = segmentDuration(project.segments[index]);
+    const width = widths[index];
+    if (position <= pixelCursor + width) return timeCursor + duration * Math.max(0, position - pixelCursor) / width;
+    timeCursor += duration;
+    pixelCursor += width + 6;
+  }
+  return totalDuration(project.segments);
+}
+
+function beginArrangementScrub(event: PointerEvent) {
+  if (event.button !== 0 || !project.segments.length) return;
+  event.preventDefault();
+  const head = event.currentTarget as HTMLElement;
+  const tracks = head.closest<HTMLElement>(".source-tracks");
+  if (!tracks) return;
+  const resumeAfterDrag = playing;
+  if (playing) pausedAt = currentElapsed();
+  playing = false;
+  cancelAnimationFrame(animationFrame);
+  youtubePlayer?.pauseVideo();
+  updatePlaybackButtons();
+  head.classList.add("dragging");
+  head.setPointerCapture(event.pointerId);
+
+  const update = (clientX: number) => {
+    const labelWidth = window.innerWidth <= 850 ? 105 : 155;
+    const position = Math.max(0, clientX - tracks.getBoundingClientRect().left + tracks.scrollLeft - labelWidth);
+    pausedAt = Math.min(totalDuration(project.segments), timelineElapsedAtPosition(position));
+    activePlaybackIndex = findSegmentIndex(pausedAt);
+    updatePlayUi(pausedAt);
+    head.setAttribute("aria-valuenow", pausedAt.toFixed(1));
+  };
+  update(event.clientX);
+
+  const move = (moveEvent: PointerEvent) => update(moveEvent.clientX);
+  const end = () => {
+    head.removeEventListener("pointermove", move);
+    head.removeEventListener("pointerup", end);
+    head.removeEventListener("pointercancel", end);
+    head.classList.remove("dragging");
+    cueArrangementAtPausedPosition(resumeAfterDrag);
+  };
+  head.addEventListener("pointermove", move);
+  head.addEventListener("pointerup", end);
+  head.addEventListener("pointercancel", end);
+}
+
+function cueArrangementAtPausedPosition(resumePlayback: boolean) {
+  const segment = project.segments[activePlaybackIndex];
+  const source = segment && sourceForSegment(segment);
+  if (!segment || !source || !youtubePlayer || !playerReady) return;
+  const offset = Math.max(0, pausedAt - segmentStart(activePlaybackIndex));
+  const options = { videoId: source.videoId, startSeconds: segment.sourceStartSeconds + offset, endSeconds: segment.sourceEndSeconds };
+  if (resumePlayback) {
+    playing = true;
+    playStartedAt = performance.now();
+    youtubePlayer.loadVideoById(options);
+    updatePlaybackButtons();
+    tick();
+  } else {
+    youtubePlayer.cueVideoById(options);
+    setPlaybackStatus(`Preview positioned at ${formatTime(pausedAt)}`);
+  }
 }
 
 function bindTimelineEvents(root: ParentNode) {
@@ -619,7 +693,10 @@ async function mountPlayerForCurrentView() {
       width: "100%",
       height: "100%",
       videoId: source.videoId,
-      host: "https://www.youtube-nocookie.com",
+      // The standard embed can use a browser's existing YouTube session when
+      // YouTube cookies are available, allowing YouTube to apply Premium benefits.
+      // Login and membership state remain private inside the cross-origin iframe.
+      host: "https://www.youtube.com",
       playerVars: { playsinline: 1, rel: 0, origin: window.location.origin },
       events: {
         onReady: () => {
@@ -656,7 +733,7 @@ async function mountPlayerForCurrentView() {
 }
 
 function setPlaybackStatus(status: string) {
-  const element = document.querySelector<HTMLElement>(".playback-status, .mock-badge");
+  const element = document.querySelector<HTMLElement>(".playback-status, .mix-playback-status");
   if (element) element.textContent = status;
 }
 
@@ -799,6 +876,17 @@ function markMomentAtScrubPoint(key: number) {
   setPlaybackStatus(`Moment starts at ${formatTime(target)} · press another number to set its end`);
 }
 
+function scrubActiveVideo(deltaSeconds: number) {
+  const duration = youtubePlayer?.getDuration() ?? 0;
+  if (!youtubePlayer || !playerReady || !Number.isFinite(duration) || duration <= 0) {
+    setPlaybackStatus("The active video is still loading");
+    return;
+  }
+  const target = Math.max(0, Math.min(duration, youtubePlayer.getCurrentTime() + deltaSeconds));
+  youtubePlayer.seekTo(target, true);
+  setPlaybackStatus(`Scrubbed to ${formatTime(target)}`);
+}
+
 function stopLiveCapture() {
   if (captureSlot === null && pendingCaptureSlot === null) return;
   finishLiveCapture();
@@ -848,6 +936,7 @@ function updatePlayUi(elapsed: number) {
   if (head) {
     head.style.setProperty("--head-x", `${timelinePosition(elapsed)}px`);
     head.classList.toggle("playing", playing);
+    head.setAttribute("aria-valuenow", elapsed.toFixed(1));
     const tracks = head.closest<HTMLElement>(".source-tracks");
     if (tracks && playing) {
       const headX = timelinePosition(elapsed) + 155;
@@ -955,10 +1044,16 @@ function isTypingTarget(target: EventTarget | null) {
 
 document.addEventListener("keydown", (event) => {
   if (isTypingTarget(event.target)) return;
+  if (mode === "mix" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    event.preventDefault();
+    scrubActiveVideo(event.key === "ArrowLeft" ? -1 : 1);
+    return;
+  }
+  if (event.key === "0" && mode === "mix") { event.preventDefault(); markMomentAtScrubPoint(0); return; }
   if (/^[1-9]$/.test(event.key) && mode === "mix") { markMomentAtScrubPoint(Number(event.key)); return; }
   if (/^[1-9]$/.test(event.key) && mode === "browse") { selectSlot(Number(event.key)); return; }
   if (mode === "mix" && event.key === "Enter") addSegment();
-  if (mode === "mix" && (event.key === " " || event.key === "0")) { event.preventDefault(); stopLiveCapture(); return; }
+  if (mode === "mix" && event.key === " ") { event.preventDefault(); stopLiveCapture(); return; }
   if (mode === "play" && event.key === " ") { event.preventDefault(); togglePlayback(); }
   if (event.key === "0") { stopPlayback(); render(); }
 });
