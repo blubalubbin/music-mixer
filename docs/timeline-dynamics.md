@@ -6,17 +6,17 @@ A two-second accent and a two-minute passage should both be legible. If the scal
 
 ## The central idea
 
-Every segment has a zoom anchor at its midpoint. At that anchor, the segment aims to occupy roughly one fifth of the visible timeline width.
+Every segment follows a sine-shaped zoom curve. It starts at the incoming pair-fit boundary scale, reaches the segment's individual scale at the midpoint, and returns toward the outgoing pair-fit boundary scale. Segment boundaries therefore remain pair-aware without introducing a central plateau.
 
 ```mermaid
 flowchart LR
-    Enter["Head enters segment"] --> First["First half<br/>move toward this segment's scale"]
-    First --> Mid["Midpoint<br/>segment is about 1/5 of timeline"]
-    Mid --> Second["Second half<br/>move toward next segment's scale"]
+    Enter["Head enters segment"] --> First["Rising sine<br/>move toward this segment's scale"]
+    First --> Mid["Midpoint<br/>reach the segment scale"]
+    Mid --> Second["Falling sine<br/>move toward the next boundary scale"]
     Second --> Next["Enter next segment"]
 ```
 
-The result is continuous rather than a sequence of jumps. The midpoint of each segment is a visual anchor, and the space between anchors is a transition.
+The result is continuous rather than a sequence of jumps. Scale changes across the whole segment, with the sine peak providing a gentle turn at the midpoint.
 
 ## What “one fifth” means
 
@@ -25,11 +25,15 @@ The target is calculated from the visible track area, excluding the fixed track-
 ```text
 target segment width = visible track width / 5
 target zoom          = target segment width / segment duration
+adjacent pair limit  = visible track width / 2
+close-up zoom limit  = 50 px/s (2 seconds per 100 pixels)
 ```
+
+At a boundary, the two touching segments, including their gap and minimum column widths, cannot exceed one half of the usable track. The boundary target is the lower of that pair-fit limit and the geometric midpoint of the segments' individual targets. The calculation is also capped at 50 pixels per second, preserving the close-up bound of two seconds per 100 pixels. Because pair fitting applies at the boundary rather than changing either segment's individual target, a distant neighbour cannot leak into the transition on the other side of a short segment.
 
 For example, if the usable track is 1,000 pixels wide, the target segment width is about 200 pixels:
 
-| Segment duration | Midpoint target |
+| Segment duration | Individual target |
 | ---: | ---: |
 | 2 seconds | 100 px/s |
 | 10 seconds | 20 px/s |
@@ -43,30 +47,39 @@ The zoom values are interpolated geometrically. This matters because zoom is mul
 
 The curve has two parts:
 
-1. **Previous midpoint to current midpoint.** The timeline moves from the previous segment's target scale toward the active segment's one-fifth target.
-2. **Current midpoint to next midpoint.** The timeline leaves the active target and approaches the following segment's target across both adjacent half-segments.
+1. **Boundary to midpoint.** The rising half of `sin(π × progress)` approaches the active segment's individual target.
+2. **Midpoint to boundary.** The falling half of the sine moves from the individual target toward the following pair-fit scale.
 
-A severe short-to-long change gets a moderately stronger response as the Head moves between the two scales. The transition spans the full distance between segment midpoints instead of being squeezed into half of the short segment. A smootherstep envelope keeps the beginning and end gradual, even when the durations differ sharply. Target scales are clamped to the timeline's current minimum and maximum zoom, and the curve is tied to the Head position so panning backward retraces the same scale change.
+Every scale change uses the same sine curve across the segment. Geometric interpolation already reflects the size of the difference, so the curve does not add extra acceleration for high-contrast pairs. The midpoint remains owned by its segment, while each boundary is owned only by the pair that touches it. Adaptive pair fitting may move below the manual fit-to-screen minimum when necessary to honor the half-screen limit. The curve is tied to the Head position so panning backward retraces the same scale change.
 
 ```mermaid
 flowchart LR
-    Short["Short midpoint<br/>close scale"] -->|"contrast-aware pull-back"| LongStart["Long segment begins"]
-    LongStart -->|"hold the target scale"| LongMid["Long midpoint<br/>1/5 width"]
-    LongMid -->|"prepare for neighbour"| Following["Following segment scale"]
+    Boundary["Pair-fit boundary"] -->|"rising sine"| Midpoint["Midpoint<br/>individual scale"]
+    Midpoint -->|"falling sine"| Following["Following pair-fit boundary"]
 ```
 
 The timeline updates in place while panning. Segment columns, time labels, group outlines, zoom controls, and the Head position all receive the same new scale. Re-rendering the entire workspace during a drag would interrupt the pointer interaction, so the live scale change is intentionally surgical.
+
+Dynamic pan zoom is enabled by default. The arrangement toolbar cycles through three locally stored modes:
+
+- **Dynamic pan:** apply the adaptive sine scale at the Head.
+- **Manual:** freeze the selected scale while panning.
+- **Pan + vertical:** drag horizontally to move through time and vertically to adjust zoom geometrically between the whole timeline's minimum and maximum scales.
+
+Pressing either minus or plus always switches to **Manual** before applying the requested zoom. Switching dynamic zoom back on immediately applies the adaptive scale at the Head.
+
+When frame buffering is disabled, timeline preview positioning always uses YouTube's non-priming cue path, even if that video has already rendered or played. Previously rendered state does not override the setting.
 
 ## A different rule while recording
 
 Live insertion has a special geometry. The new bar ends at the fixed Head and grows to the left. It therefore has only the left half of the timeline in which to remain visible.
 
-While recording, the zoom progressively scales out using the actual space between the track-label edge and the Head. This is different from midpoint navigation:
+While recording, the zoom progressively scales out using the actual space between the track-label edge and the Head. This is different from sine-curve navigation:
 
 - **Recording:** keep the growing tail visible to the left of the Head.
-- **Exploring:** make each segment roughly one fifth of the track at its midpoint.
+- **Exploring:** make each segment roughly one fifth of the track at the peak of its sine curve.
 
-Once recording ends, the saved segment participates in the ordinary midpoint-to-midpoint zoom system.
+Once recording ends, the saved segment participates in the ordinary boundary-to-midpoint sine zoom system.
 
 ## Scale is visual; time remains authoritative
 
@@ -76,7 +89,7 @@ Adaptive zoom never changes a segment's timestamps or duration. Arrangement time
 flowchart TB
     Time["Arrangement time<br/>authoritative"] --> Position["Head position"]
     Time --> Active["Active segment"]
-    Active --> Target["Midpoint zoom target"]
+    Active --> Target["Individual zoom target"]
     Target --> Pixels["Pixels per second"]
     Pixels --> Render["Timeline rendering"]
 ```

@@ -32,6 +32,8 @@ The Head itself remains visually fixed during ordinary panning. You move the arr
 
 With multiple segments, dragging a segment is reserved for reordering. Pan from the track background, time axis, or another open part of the timeline.
 
+While reordering, holding the dragged segment near the left or right edge continuously pans the arrangement. The segment remains under the pointer and the drop target updates as columns move beneath it. Edge panning uses adaptive scale in **Dynamic pan** mode and preserves the chosen scale in **Manual** and **Pan + vertical** modes.
+
 ## Focus changes the keyboard
 
 The same keys can mean different things depending on where attention lives.
@@ -50,7 +52,11 @@ stateDiagram-v2
 
 When the timeline has focus, the Previous and Next buttons reveal their `←` and `→` hints. Panning explicitly gives the timeline focus, so the keyboard is ready immediately after a pointer gesture.
 
+In Mix mode, `+` and `−` adjust the timeline zoom from any non-text control. Like the toolbar buttons, either shortcut switches zoom mode to **Manual**.
+
 Text inputs remain protected: arrow keys and Space behave normally while typing.
+
+The Mix editor shows a contextual shortcut card beside the video. Focusing a video-side control shows source scrubbing and capture keys; focusing or panning the timeline changes the card to segment navigation, playback, panning, and zoom keys.
 
 ## What happens during a pan
 
