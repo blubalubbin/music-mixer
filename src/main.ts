@@ -38,6 +38,7 @@ let timelineZoom = 18;
 let initialTimelineFramed = false;
 let arrangementScrollLeft = 0;
 const selectedMomentIds = new Set<string>();
+let suppressNextMomentClick = false;
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -231,6 +232,7 @@ function timelineView() {
       <div class="timeline source-tracks">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels()}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
+        ${groupRegions(columnWidths)}
         ${project.segments.length ? `<button class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" type="button" aria-label="Drag arrangement preview head" aria-valuemin="0" aria-valuemax="${duration.toFixed(1)}" aria-valuenow="${elapsed.toFixed(1)}"></button>` : ""}
       </div>
       <button class="add-track-video" data-mode="browse"><span>＋</span> Add track video</button>
@@ -273,11 +275,31 @@ function timelinePosition(elapsed: number, widths = timelineColumnWidths()) {
   return pixelCursor;
 }
 
+function groupRegions(widths: number[]) {
+  const regions: string[] = [];
+  let index = 0;
+  while (index < project.segments.length) {
+    const groupId = project.segments[index].groupId;
+    if (!groupId) { index += 1; continue; }
+    const start = index;
+    while (index + 1 < project.segments.length && project.segments[index + 1].groupId === groupId) index += 1;
+    const end = index;
+    if (end > start) {
+      const left = widths.slice(0, start).reduce((sum, width) => sum + width + 6, 0);
+      const width = widths.slice(start, end + 1).reduce((sum, item) => sum + item, 0) + (end - start) * 6;
+      const source = sourceForSegment(project.segments[start]);
+      regions.push(`<div class="group-region" style="--group-left:${left}px;--group-width:${width}px;--group-color:${SLOT_COLORS[(source?.slot ?? 1) - 1]}" aria-hidden="true"></div>`);
+    }
+    index += 1;
+  }
+  return regions.join("");
+}
+
 function segmentCard(segment: Segment, index: number) {
   const source = sourceForSegment(segment);
   const slot = source?.slot ?? 1;
   const duration = segmentDuration(segment);
-  return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
+  return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" data-index="${index}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
     ${segment.groupId ? `<span class="group-badge" title="Grouped moment">G</span>` : ""}
     <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}</small></span>
@@ -417,12 +439,17 @@ function bindTimelineEvents(root: ParentNode) {
     item.addEventListener("pointerdown", beginSegmentReorder);
     item.addEventListener("click", selectMoment);
   });
+  root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("pointerdown", beginMarqueeSelection);
   root.querySelectorAll<HTMLElement>("[data-bulk-action]").forEach((button) => button.addEventListener("click", () => bulkEditMoments(button.dataset.bulkAction!)));
 }
 
 function selectMoment(event: MouseEvent) {
   if ((event.target as HTMLElement).closest("button")) return;
   const card = event.currentTarget as HTMLElement;
+  if (suppressNextMomentClick) {
+    suppressNextMomentClick = false;
+    return;
+  }
   if (card.dataset.dragged === "true") {
     delete card.dataset.dragged;
     return;
@@ -439,7 +466,77 @@ function selectMoment(event: MouseEvent) {
   refreshTimeline(false);
 }
 
+function beginMarqueeSelection(event: PointerEvent) {
+  if (event.button !== 0 || !event.shiftKey) return;
+  const target = event.target as HTMLElement;
+  if (target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment")) return;
+
+  event.preventDefault();
+  const tracks = event.currentTarget as HTMLElement;
+  const originX = event.clientX;
+  const originY = event.clientY;
+  const selectionBeforeDrag = new Set(selectedMomentIds);
+  const marquee = document.createElement("div");
+  marquee.className = "selection-marquee";
+  let dragging = false;
+  tracks.setPointerCapture(event.pointerId);
+
+  const move = (moveEvent: PointerEvent) => {
+    if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) < 5) return;
+    if (!dragging) {
+      dragging = true;
+      document.body.append(marquee);
+    }
+    const left = Math.min(originX, moveEvent.clientX);
+    const top = Math.min(originY, moveEvent.clientY);
+    const right = Math.max(originX, moveEvent.clientX);
+    const bottom = Math.max(originY, moveEvent.clientY);
+    marquee.style.left = `${left}px`;
+    marquee.style.top = `${top}px`;
+    marquee.style.width = `${right - left}px`;
+    marquee.style.height = `${bottom - top}px`;
+
+    selectedMomentIds.clear();
+    selectionBeforeDrag.forEach((id) => selectedMomentIds.add(id));
+    const touchedIndexes = new Set<number>();
+    tracks.querySelectorAll<HTMLElement>(".segment[data-segment]").forEach((card) => {
+      const bounds = card.getBoundingClientRect();
+      if (bounds.left <= right && bounds.right >= left) touchedIndexes.add(Number(card.dataset.index));
+    });
+    if (touchedIndexes.size) {
+      const first = Math.min(...touchedIndexes);
+      const last = Math.max(...touchedIndexes);
+      project.segments.slice(first, last + 1).forEach((segment) => selectedMomentIds.add(segment.id));
+    }
+    tracks.querySelectorAll<HTMLElement>(".segment[data-segment]").forEach((card) => {
+      card.classList.toggle("selected", Boolean(card.dataset.segment && selectedMomentIds.has(card.dataset.segment)));
+    });
+  };
+
+  const finish = (cancelled = false) => {
+    tracks.removeEventListener("pointermove", move);
+    tracks.removeEventListener("pointerup", end);
+    tracks.removeEventListener("pointercancel", cancel);
+    marquee.remove();
+    if (cancelled) {
+      selectedMomentIds.clear();
+      selectionBeforeDrag.forEach((id) => selectedMomentIds.add(id));
+    }
+    if (dragging) {
+      suppressNextMomentClick = true;
+      window.setTimeout(() => { suppressNextMomentClick = false; }, 0);
+      refreshTimeline(false);
+    }
+  };
+  const end = () => finish();
+  const cancel = () => finish(true);
+  tracks.addEventListener("pointermove", move);
+  tracks.addEventListener("pointerup", end);
+  tracks.addEventListener("pointercancel", cancel);
+}
+
 function bulkEditMoments(action: string) {
+  if (action === "group" && selectedMomentIds.size > 1) selectContiguousMomentRange();
   const selected = project.segments.filter((segment) => selectedMomentIds.has(segment.id));
   if (!selected.length) return;
   if (action === "delete") {
@@ -463,6 +560,12 @@ function bulkEditMoments(action: string) {
   cleanupMomentGroups();
   saveProject();
   refreshTimeline(action === "duplicate");
+}
+
+function selectContiguousMomentRange() {
+  const indexes = project.segments.flatMap((segment, index) => selectedMomentIds.has(segment.id) ? [index] : []);
+  if (!indexes.length) return;
+  project.segments.slice(Math.min(...indexes), Math.max(...indexes) + 1).forEach((segment) => selectedMomentIds.add(segment.id));
 }
 
 function cleanupMomentGroups() {
@@ -562,6 +665,7 @@ function reorderSegment(fromId: string, toId: string) {
 }
 
 function beginSegmentReorder(event: PointerEvent) {
+  if (event.shiftKey) return;
   const card = event.currentTarget as HTMLElement;
   if ((event.target as HTMLElement).closest("button")) return;
   const fromId = card.dataset.segment;
