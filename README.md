@@ -33,6 +33,8 @@ flowchart LR
 
 - [Product specification](docs/product-spec.md)
 - [Interaction model](docs/interaction-model.md)
+- [The timeline that breathes](docs/timeline-dynamics.md)
+- [Panning and the Head](docs/head-and-panning.md)
 - [Source strategy](docs/source-strategy.md)
 - [Technical approach](docs/technical-approach.md)
 - [First-build brief](docs/first-build.md)
