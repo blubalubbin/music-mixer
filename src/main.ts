@@ -19,6 +19,34 @@ const DYNAMIC_PAN_ZOOM_KEY = "music-mixer-dynamic-pan-zoom-v1";
 const INSERTION_PAN_ZOOM_KEY = "music-mixer-insertion-pan-zoom-v1";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
+const TIM_STARTER_MIX: MixProject = {
+  version: 1,
+  title: "Tim’s starter mix",
+  sources: [
+    { id: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", slot: 1, videoId: "Gf-fCJ6TkRU", originalUrl: "https://www.youtube.com/watch?v=Gf-fCJ6TkRU", title: "YouTube video Gf-fCJ6TkRU" },
+    { id: "3f1ef269-eeca-488a-858b-5f339f24c491", slot: 2, videoId: "psuRGfAaju4", originalUrl: "https://www.youtube.com/watch?v=psuRGfAaju4", title: "YouTube video psuRGfAaju4" },
+    { id: "e3266dac-b8d2-45d9-a2fa-283a1600a898", slot: 3, videoId: "7OWq_qLP8BM", originalUrl: "https://www.youtube.com/watch?v=7OWq_qLP8BM", title: "YouTube video 7OWq_qLP8BM" },
+  ],
+  segments: [
+    { id: "37bd0cac-c976-4e39-ae4b-0b4ced908e9d", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 71.6, sourceEndSeconds: 75.7, lane: 0 },
+    { id: "f4a118a4-37ef-4c95-a38c-8c0a1210dd68", sourceId: "e3266dac-b8d2-45d9-a2fa-283a1600a898", sourceStartSeconds: 2.068728450005752, sourceEndSeconds: 16.6, lane: 0, playbackRate: 2 },
+    { id: "79c6fd55-14b1-4283-b5bb-ba6d218eaf40", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 89.8, sourceEndSeconds: 154.8, lane: 0, playbackRate: 1.25 },
+    { id: "bc8b0202-d6a3-4003-9dd2-6d4e0300902c", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 90.1, sourceEndSeconds: 122.2, lane: 0, playbackRate: 1.75 },
+    { id: "607df6d8-ed00-424b-bdbe-f2ea7b1e3620", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 124.3, sourceEndSeconds: 129.7, lane: 0, playbackRate: 1.75 },
+    { id: "dd4a5a57-6fd5-4aa7-9114-06fee01f7530", sourceId: "3f1ef269-eeca-488a-858b-5f339f24c491", sourceStartSeconds: 82.3, sourceEndSeconds: 119.3, lane: 0, playbackRate: 1.5 },
+    { id: "6064050c-e77f-4a72-ac55-0cead592f7f2", sourceId: "3f1ef269-eeca-488a-858b-5f339f24c491", sourceStartSeconds: 25.6, sourceEndSeconds: 62.6, lane: 0 },
+    { id: "1fb7b972-22f8-41f9-ae50-4a28fd038f2c", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 25.6, sourceEndSeconds: 28.1, lane: 0 },
+    { id: "d0002111-bb46-432b-8e9b-65fe422dfc57", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 28.118357495005018, sourceEndSeconds: 44.4, lane: 0 },
+    { id: "3a37ea26-d42b-487c-b5a8-227f30def072", sourceId: "3f1ef269-eeca-488a-858b-5f339f24c491", sourceStartSeconds: 133.1, sourceEndSeconds: 170.1, lane: 0, playbackRate: 1.75 },
+    { id: "442ee5b1-9ca0-420c-93c6-95c067c1a332", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 28.118357495005018, sourceEndSeconds: 44.4, lane: 0 },
+    { id: "7da90b3a-b037-46c2-b23d-28cea4d83885", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 8, sourceEndSeconds: 9.6, lane: 0 },
+    { id: "1838a505-b201-4c2c-9ded-280cd861901b", sourceId: "3f1ef269-eeca-488a-858b-5f339f24c491", sourceStartSeconds: 0, sourceEndSeconds: 2.1, lane: 0 },
+    { id: "1a1103b5-4d7b-41fa-8354-bc20a171b019", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 124.3, sourceEndSeconds: 128.5, lane: 0 },
+    { id: "82e338ab-41e1-432e-98e9-4cab879bdbdc", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 13.7, sourceEndSeconds: 57.7, lane: 0, playbackRate: 1.5 },
+    { id: "f672d7af-f57b-4b0d-a1db-45404341bafc", sourceId: "3654b82d-fcd4-40d4-ae41-81145c5b3b19", sourceStartSeconds: 39.5, sourceEndSeconds: 43.8, lane: 0, playbackRate: 1.25 },
+  ],
+};
+
 let project = loadProject();
 let lastSavedProject = structuredClone(project);
 const undoStack: MixProject[] = [];
@@ -247,6 +275,7 @@ function browseView() {
         <div><p class="eyebrow">BUILD YOUR PALETTE</p><h1>Choose your sources.</h1></div>
         <p class="lede">Nine slots. Nine colors. Paste a YouTube link to give each key a sound and a visual.</p>
       </div>
+      ${starterTemplatePicker()}
       <div class="source-grid">
         ${Array.from({ length: 9 }, (_, index) => sourceTile(index + 1)).join("")}
       </div>
@@ -323,6 +352,7 @@ function mixView() {
             <div class="arrangement-summary">
               <p class="eyebrow">ARRANGEMENT</p>
               <h3 id="arrangement-summary-title">${project.segments.length ? `${project.segments.length} moments · ${formatTime(totalDuration(project.segments))}` : "Your mix is empty"}</h3>
+              ${project.segments.length ? "" : `<button class="template-load compact" data-template="tim-starter" type="button">Start with Tim’s mix →</button>`}
               ${transferMessage ? `<p class="transfer-message" role="status">${escapeHtml(transferMessage)}</p>` : ""}
             </div>
           </div>
@@ -346,6 +376,13 @@ function mixView() {
       </div>
       ${timelineView()}
     </section>`;
+}
+
+function starterTemplatePicker() {
+  return `<section class="starter-template" aria-labelledby="starter-template-title">
+    <div><p class="eyebrow">STARTER TEMPLATE</p><h2 id="starter-template-title">Tim’s starter mix</h2><p>${TIM_STARTER_MIX.sources.length} YouTube sources · ${TIM_STARTER_MIX.segments.length} arranged moments · ${formatTime(totalDuration(TIM_STARTER_MIX.segments))}</p></div>
+    <button class="template-load" data-template="tim-starter" type="button">Use this template <span>→</span></button>
+  </section>`;
 }
 
 function timelineView() {
@@ -629,6 +666,7 @@ function playView() {
 
 function bindEvents() {
   document.querySelector("#restart-timeline")?.addEventListener("click", restartTimeline);
+  document.querySelectorAll<HTMLElement>("[data-template]").forEach((button) => button.addEventListener("click", loadStarterTemplate));
   document.querySelectorAll<HTMLElement>("[data-mode]").forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode as Mode)));
   document.querySelectorAll<HTMLElement>("[data-slot]").forEach((tile) => tile.addEventListener("click", () => selectSlot(Number(tile.dataset.slot))));
   document.querySelectorAll<HTMLElement>("[data-track-edit]").forEach((button) => button.addEventListener("click", () => editTrack(Number(button.dataset.trackEdit))));
@@ -650,6 +688,26 @@ function bindEvents() {
   document.querySelector("#play-toggle")?.addEventListener("click", togglePlayback);
   document.querySelector("#stop")?.addEventListener("click", () => { stopPlayback(); render(); });
   bindTimelineControls(document);
+}
+
+function loadStarterTemplate(event: Event) {
+  const button = event.currentTarget as HTMLElement;
+  if (button.dataset.template !== "tim-starter") return;
+  if ((project.sources.length || project.segments.length)
+    && !window.confirm("Use Tim’s starter mix and replace the current source videos and timeline? You can undo this change.")) return;
+  stopPlayback();
+  project = structuredClone(TIM_STARTER_MIX);
+  saveProject();
+  selectedMomentIds.clear();
+  lastAddedMomentId = null;
+  selectedSlot = project.sources[0]?.slot ?? 1;
+  pausedAt = 0;
+  activePlaybackIndex = 0;
+  arrangementScrollLeft = 0;
+  initialTimelineFramed = false;
+  transferMessage = `Loaded Tim’s starter mix · ${project.segments.length} moments and ${project.sources.length} sources.`;
+  mode = "mix";
+  render();
 }
 
 function handleRangeSummaryAction(event: Event) {
