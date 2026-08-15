@@ -209,7 +209,7 @@ function timelineView() {
     <section class="timeline-section">
       <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div>${project.segments.length ? `<button class="primary" data-mode="play">Play mix <span>▶</span></button>` : ""}</div>
       <div class="timeline ${project.segments.length ? "" : "timeline-empty"}">
-        ${project.segments.length ? project.segments.map((segment, index) => segmentCard(segment, index)).join("") : `<p>Add a segment and it will appear here.</p>`}
+        ${project.segments.length ? ([0, 1] as const).map((lane) => `<div class="lane-label">${lane === 0 ? "Main" : "Layer"}</div><div class="timeline-lane" data-lane="${lane}">${project.segments.map((segment, index) => segment.lane === lane ? segmentCard(segment, index) : "").join("") || `<span class="lane-empty">Drag or move a moment here</span>`}</div>`).join("") : `<p>Add a segment and it will appear here.</p>`}
       </div>
     </section>`;
 }
@@ -217,12 +217,18 @@ function timelineView() {
 function segmentCard(segment: Segment, index: number) {
   const source = sourceForSegment(segment);
   const slot = source?.slot ?? 1;
-  return `<article class="segment" style="--slot-color:${SLOT_COLORS[slot - 1]}" draggable="true" data-segment="${segment.id}">
+  const duration = segmentDuration(segment);
+  return `<article class="segment" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" draggable="true" data-segment="${segment.id}">
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
     <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)} · lane ${segment.lane + 1}</small></span>
     <button data-action="lane" data-id="${segment.id}" aria-label="Move to other lane">L${segment.lane + 1}</button>
     <button data-action="duplicate" data-id="${segment.id}" aria-label="Duplicate segment">⧉</button>
     <button data-action="delete" data-id="${segment.id}" aria-label="Delete segment">×</button>
+    <div class="duration-bar" aria-label="${duration.toFixed(1)} second moment">
+      <button class="trim-handle trim-start" data-trim="start" data-id="${segment.id}" aria-label="Drag to change segment start"></button>
+      <span><i></i><em>${duration.toFixed(1)}s</em></span>
+      <button class="trim-handle trim-end" data-trim="end" data-id="${segment.id}" aria-label="Drag to change segment end"></button>
+    </div>
   </article>`;
 }
 
@@ -261,10 +267,22 @@ function bindEvents() {
   document.querySelector<HTMLInputElement>("#start-time")?.addEventListener("input", updateTimeValues);
   document.querySelector<HTMLInputElement>("#end-time")?.addEventListener("input", updateTimeValues);
   document.querySelectorAll<HTMLElement>("[data-action]").forEach((button) => button.addEventListener("click", () => editSegment(button.dataset.action!, button.dataset.id!)));
+  document.querySelectorAll<HTMLButtonElement>("[data-trim]").forEach((handle) => handle.addEventListener("pointerdown", beginTrim));
   document.querySelectorAll<HTMLElement>("[draggable=true]").forEach((item) => {
     item.addEventListener("dragstart", (event) => event.dataTransfer?.setData("text/plain", item.dataset.segment!));
     item.addEventListener("dragover", (event) => event.preventDefault());
-    item.addEventListener("drop", (event) => { event.preventDefault(); reorderSegment(event.dataTransfer?.getData("text/plain") ?? "", item.dataset.segment!); });
+    item.addEventListener("drop", (event) => { event.preventDefault(); event.stopPropagation(); reorderSegment(event.dataTransfer?.getData("text/plain") ?? "", item.dataset.segment!); });
+  });
+  document.querySelectorAll<HTMLElement>("[data-lane]").forEach((lane) => {
+    lane.addEventListener("dragover", (event) => event.preventDefault());
+    lane.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const segment = project.segments.find((item) => item.id === event.dataTransfer?.getData("text/plain"));
+      if (!segment) return;
+      segment.lane = Number(lane.dataset.lane) as 0 | 1;
+      saveProject();
+      render();
+    });
   });
   document.querySelector("#play-toggle")?.addEventListener("click", togglePlayback);
   document.querySelector("#stop")?.addEventListener("click", () => { stopPlayback(); render(); });
@@ -298,8 +316,17 @@ function assignSource(event: SubmitEvent) {
 }
 
 function updateTimeValues() {
-  startValue = Number(document.querySelector<HTMLInputElement>("#start-time")?.value ?? 0);
-  endValue = Number(document.querySelector<HTMLInputElement>("#end-time")?.value ?? 0);
+  const nextStart = Number(document.querySelector<HTMLInputElement>("#start-time")?.value ?? 0);
+  const nextEnd = Number(document.querySelector<HTMLInputElement>("#end-time")?.value ?? 0);
+  if (nextStart !== startValue) {
+    const preservedDuration = Math.max(0.1, endValue - startValue);
+    startValue = Math.max(0, nextStart);
+    endValue = startValue + preservedDuration;
+    const endInput = document.querySelector<HTMLInputElement>("#end-time");
+    if (endInput) endInput.value = String(Number(endValue.toFixed(1)));
+  } else {
+    endValue = nextEnd;
+  }
   const readout = document.querySelector<HTMLElement>(".duration-readout b");
   if (readout) readout.textContent = formatTime(endValue - startValue);
 }
@@ -337,6 +364,45 @@ function reorderSegment(fromId: string, toId: string) {
   project.segments.splice(to, 0, moved);
   saveProject();
   render();
+}
+
+function beginTrim(event: PointerEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  const handle = event.currentTarget as HTMLButtonElement;
+  const segment = project.segments.find((item) => item.id === handle.dataset.id);
+  const edge = handle.dataset.trim as "start" | "end";
+  if (!segment) return;
+  const originX = event.clientX;
+  const originalStart = segment.sourceStartSeconds;
+  const originalEnd = segment.sourceEndSeconds;
+  handle.setPointerCapture(event.pointerId);
+  const move = (moveEvent: PointerEvent) => {
+    const deltaSeconds = (moveEvent.clientX - originX) / 12;
+    if (edge === "start") segment.sourceStartSeconds = Number(Math.max(0, Math.min(originalEnd - 0.1, originalStart + deltaSeconds)).toFixed(1));
+    else segment.sourceEndSeconds = Number(Math.max(originalStart + 0.1, originalEnd + deltaSeconds).toFixed(1));
+    updateSegmentBar(handle.closest<HTMLElement>(".segment"), segment);
+  };
+  const end = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", end);
+    handle.removeEventListener("pointercancel", end);
+    saveProject();
+    render();
+  };
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+}
+
+function updateSegmentBar(card: HTMLElement | null, segment: Segment) {
+  if (!card) return;
+  const duration = segmentDuration(segment);
+  card.style.setProperty("--segment-width", `${Math.min(520, Math.max(190, duration * 18))}px`);
+  const small = card.querySelector(".segment-info small");
+  if (small) small.textContent = `${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)} · lane ${segment.lane + 1}`;
+  const label = card.querySelector(".duration-bar em");
+  if (label) label.textContent = `${duration.toFixed(1)}s`;
 }
 
 function segmentStart(index: number) {
@@ -452,7 +518,11 @@ function previewSegment() {
 function setBoundFromPlayer(bound: "start" | "end") {
   if (!youtubePlayer || !playerReady) return;
   const time = Math.max(0, Number(youtubePlayer.getCurrentTime().toFixed(1)));
-  if (bound === "start") startValue = time;
+  if (bound === "start") {
+    const preservedDuration = Math.max(0.1, endValue - startValue);
+    startValue = time;
+    endValue = time + preservedDuration;
+  }
   else endValue = time;
   render();
 }
