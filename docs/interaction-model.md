@@ -44,7 +44,7 @@ Recommended keyboard path:
 1. Set the source start time in the segment editor.
 2. Press its `1`–`9` key to start playing and recording from that point.
 3. Press any source key to close the current moment and immediately trigger the next one.
-4. Press `Space` to close the final moment and pause.
+4. Press `Space` or `0` to close the final moment and pause.
 
 Repeated presses of the same key retrigger the same source start. The time between presses becomes the captured moment's duration. Clicking a source tile still selects it for precise start/end editing.
 

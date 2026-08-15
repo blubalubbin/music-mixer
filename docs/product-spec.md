@@ -80,7 +80,7 @@ The first release should avoid assigning two unrelated meanings to a number key 
 | Mix, recording | Close the current moment and trigger the selected source |
 | Play | Optional live trigger, disabled by default |
 
-`0` is reserved for a global action such as stop, rather than representing a tenth source in a nine-tile layout.
+`0` is the global stop key and closes an active Mix capture rather than representing a tenth source.
 
 ## Minimum viable product
 
