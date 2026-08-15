@@ -35,6 +35,8 @@ let captureSlot: number | null = null;
 let captureSourceStart = 0;
 let pendingCaptureSlot: number | null = null;
 let timelineZoom = 18;
+let initialTimelineFramed = false;
+let arrangementScrollLeft = 0;
 const selectedMomentIds = new Set<string>();
 
 type YouTubePlayer = {
@@ -117,7 +119,8 @@ function render() {
   bindEvents();
   queueMicrotask(() => {
     mountPlayerForCurrentView();
-    if (mode === "mix") scrollArrangementToEnd();
+    if (mode === "mix" && project.segments.length && !initialTimelineFramed) frameInitialTimeline();
+    else if (mode === "mix") restoreArrangementScroll();
   });
 }
 
@@ -215,7 +218,7 @@ function mixView() {
 function timelineView() {
   const duration = totalDuration(project.segments);
   const sources = [...project.sources].sort((a, b) => a.slot - b.slot);
-  const columnWidths = project.segments.map((segment) => Math.max(36, segmentDuration(segment) * timelineZoom));
+  const columnWidths = timelineColumnWidths();
   const columns = columnWidths.map((width) => `${width}px`).join(" ");
   const elapsed = currentElapsed();
   return `
@@ -250,7 +253,11 @@ function formatTimePrecise(seconds: number) {
   return `${minutes}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
 }
 
-function timelinePosition(elapsed: number, widths = project.segments.map((segment) => Math.max(36, segmentDuration(segment) * timelineZoom))) {
+function timelineColumnWidths(zoom = timelineZoom) {
+  return project.segments.map((segment) => Math.max(12, segmentDuration(segment) * zoom));
+}
+
+function timelinePosition(elapsed: number, widths = timelineColumnWidths()) {
   let timeCursor = 0;
   let pixelCursor = 0;
   for (let index = 0; index < project.segments.length; index += 1) {
@@ -324,6 +331,9 @@ function bindTimelineControls(root: ParentNode) {
   root.querySelector("#arrangement-play")?.addEventListener("click", toggleArrangementPlayback);
   root.querySelector("#zoom-out")?.addEventListener("click", () => changeTimelineZoom(-4));
   root.querySelector("#zoom-in")?.addEventListener("click", () => changeTimelineZoom(4));
+  root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("scroll", (event) => {
+    arrangementScrollLeft = (event.currentTarget as HTMLElement).scrollLeft;
+  }, { passive: true });
 }
 
 function bindTimelineEvents(root: ParentNode) {
@@ -693,7 +703,7 @@ function finishLiveCapture(sourceEnd = youtubePlayer?.getCurrentTime()) {
       lane: 0,
     });
     saveProject();
-    refreshTimeline(true);
+    refreshTimeline(false);
   }
   captureSlot = null;
 }
@@ -710,16 +720,43 @@ function refreshTimeline(scrollToEnd = false) {
   bindTimelineEvents(next);
   bindTimelineControls(next);
   if (scrollToEnd) requestAnimationFrame(scrollArrangementToEnd);
+  else requestAnimationFrame(restoreArrangementScroll);
 }
 
 function scrollArrangementToEnd() {
   const tracks = document.querySelector<HTMLElement>(".source-tracks");
-  if (tracks) tracks.scrollLeft = Math.max(0, tracks.scrollWidth - tracks.clientWidth);
+  if (tracks) {
+    arrangementScrollLeft = Math.max(0, tracks.scrollWidth - tracks.clientWidth);
+    tracks.scrollLeft = arrangementScrollLeft;
+  }
+}
+
+function restoreArrangementScroll() {
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (tracks) tracks.scrollLeft = arrangementScrollLeft;
+}
+
+function frameInitialTimeline() {
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (!tracks || !project.segments.length) return;
+  const available = Math.max(80, tracks.clientWidth - (window.innerWidth <= 850 ? 105 : 155));
+  let low = 0.5;
+  let high = 54;
+  for (let step = 0; step < 20; step += 1) {
+    const candidate = (low + high) / 2;
+    const width = timelineColumnWidths(candidate).reduce((sum, value) => sum + value, 0) + Math.max(0, project.segments.length - 1) * 6;
+    if (width <= available) low = candidate;
+    else high = candidate;
+  }
+  timelineZoom = Number(low.toFixed(1));
+  initialTimelineFramed = true;
+  refreshTimeline(false);
+  requestAnimationFrame(scrollArrangementToEnd);
 }
 
 function changeTimelineZoom(delta: number) {
-  timelineZoom = Math.max(6, Math.min(54, timelineZoom + delta));
-  refreshTimeline(true);
+  timelineZoom = Math.max(0.5, Math.min(54, timelineZoom + delta));
+  refreshTimeline(false);
 }
 
 function restoreMixKeyboardFocus() {
