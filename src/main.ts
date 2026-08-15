@@ -42,6 +42,7 @@ let timelineZoom = 18;
 const TIMELINE_COLUMN_MIN_WIDTH = 12;
 const TIMELINE_COLUMN_GAP = 6;
 const TIMELINE_MAX_ZOOM = 50; // 2 seconds per 100 pixels
+let timelineHeadLocked = true;
 let initialTimelineFramed = false;
 let arrangementScrollLeft = 0;
 let suppressArrangementScrollSync = false;
@@ -246,7 +247,7 @@ function timelineView() {
   return `
     <section class="timeline-section">
       <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}${project.segments.length ? `<button class="restart-timeline" id="restart-timeline" type="button">Restart timeline</button>` : ""}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out" ${timelineZoom <= zoomBounds.min ? "disabled" : ""}>−</button><span>${formatZoomScale(timelineZoom)}</span><button id="zoom-in" aria-label="Zoom in" ${timelineZoom >= zoomBounds.max ? "disabled" : ""}>＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
-      <div class="timeline source-tracks" style="--track-count:${sources.length}">
+      <div class="timeline source-tracks ${timelineHeadLocked ? "" : "head-unlocked"}" style="--track-count:${sources.length}">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels(columnWidths)}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
         ${groupRegions(columnWidths)}
@@ -514,10 +515,14 @@ function beginArrangementScrub(event: PointerEvent) {
 function beginTimelinePan(event: PointerEvent) {
   if (event.button !== 0 || event.shiftKey || event.altKey || !project.segments.length) return;
   const target = event.target as HTMLElement;
-  if (target.closest("button, .track-label, .time-label, .trim-handle, .arrangement-head")) return;
+  if (target.closest("button, .segment, .track-label, .time-label, .trim-handle, .arrangement-head")) return;
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
-  const startedOnSegment = Boolean(target.closest(".segment"));
+  timelineHeadLocked = true;
+  tracks.classList.remove("head-unlocked");
+  pausedAt = elapsedAtCenteredHead(tracks, tracks.clientWidth / 2);
+  activePlaybackIndex = findSegmentIndex(pausedAt);
+  updatePlayUi(pausedAt);
   if (playing) {
     pausedAt = currentElapsed();
     playing = false;
@@ -548,7 +553,6 @@ function beginTimelinePan(event: PointerEvent) {
     tracks.classList.remove("panning");
     if (!dragging) return;
     suppressNextTimelineSeek = true;
-    if (startedOnSegment) suppressNextMomentClick = true;
     window.setTimeout(() => { suppressNextTimelineSeek = false; }, 350);
     cueArrangementAtPausedPosition(false);
   };
@@ -832,7 +836,7 @@ function reorderSegment(fromId: string, toId: string, draggedIds?: Set<string>, 
 }
 
 function beginSegmentReorder(event: PointerEvent) {
-  if (!event.altKey || event.shiftKey) return;
+  if (event.shiftKey) return;
   const card = event.currentTarget as HTMLElement;
   if ((event.target as HTMLElement).closest("button")) return;
   const fromId = card.dataset.segment;
@@ -856,6 +860,8 @@ function beginSegmentReorder(event: PointerEvent) {
     if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) > 6) {
       dragging = true;
       card.dataset.dragged = "true";
+      timelineHeadLocked = false;
+      card.closest<HTMLElement>(".source-tracks")?.classList.add("head-unlocked");
       movingCards.forEach((item) => item.classList.add("dragging"));
     }
     if (!dragging) return;

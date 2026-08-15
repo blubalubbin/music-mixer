@@ -117,6 +117,7 @@ main{min-height:0;overflow:hidden}
 .time-axis>span{position:relative;white-space:nowrap;padding-left:3px}
 .time-axis>span i{position:absolute;left:0;bottom:-1px;width:1px;height:7px;background:#777}
 .arrangement-head{grid-column:1/-1;grid-row:1/-1;align-self:stretch;justify-self:start;position:sticky;z-index:9;top:5px;bottom:auto;left:50%;translate:-50% 0;width:14px;height:calc(100% - 10px);border:0;padding:0;background:transparent;cursor:ew-resize;touch-action:none}
+.timeline.source-tracks.head-unlocked .arrangement-head{position:absolute;left:calc(10px + var(--track-label-width) + var(--timeline-gutter-left) + var(--head-x));}
 .arrangement-head::after{content:"";position:absolute;left:6px;top:0;bottom:0;width:2px;background:#f5f1e8;box-shadow:0 0 8px #000}
 .arrangement-head::before{content:"";position:absolute;left:2px;top:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid #f5f1e8}
 .arrangement-head:hover::after,.arrangement-head.dragging::after{width:4px;left:5px}.arrangement-head.playing::after{background:#ff6047}.arrangement-head.playing::before{border-top-color:#ff6047}
