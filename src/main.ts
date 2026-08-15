@@ -699,45 +699,127 @@ function beginTimelinePan(event: PointerEvent) {
   }
   const originX = event.clientX;
   const originY = event.clientY;
-  const gestureOriginZoom = timelineZoom;
+  let gestureOriginZoom = timelineZoom;
+  let gestureOriginY = event.clientY;
   const gestureZoomBounds = timelineZoomBounds(tracks);
-  const panOriginElapsed = elapsedAtCenteredHead(tracks, tracks.clientWidth / 2);
   lastTimelinePanSeekAt = -Infinity;
   let lastClientX = event.clientX;
   const headViewportX = timelineHeadViewportX(tracks);
   let dragging = false;
-  let verticalZoomOnly = false;
+  let gestureMode: "pan" | "zoom" | null = null;
+  let directionRearmed = false;
+  let zoomAnchorElapsed = panDuringPlayback ? currentElapsed() : pausedAt;
+  let gestureIndicator: HTMLDivElement | null = null;
+  const gestureSelectionRadius = 18;
+  const gestureCrossoverRadius = 22;
   tracks.setPointerCapture(event.pointerId);
 
   const move = (moveEvent: PointerEvent) => {
     if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) < 4) return;
     dragging = true;
-    verticalZoomOnly = panDuringPlayback
-      && panZoomMode === "gesture"
-      && Math.abs(moveEvent.clientY - originY) > Math.abs(moveEvent.clientX - originX);
+    const horizontalTravel = Math.abs(moveEvent.clientX - originX);
+    const verticalDistance = Math.abs(moveEvent.clientY - originY);
+    const originDistance = Math.hypot(horizontalTravel, verticalDistance);
+    const zoomIntent = verticalDistance / Math.max(1, horizontalTravel + verticalDistance);
+    let nextGestureMode = gestureMode;
+    const activeAxisDistance = gestureMode === "pan" ? horizontalTravel : verticalDistance;
+    if (panZoomMode === "gesture" && gestureMode && activeAxisDistance <= gestureCrossoverRadius) {
+      directionRearmed = true;
+      if (gestureMode === "pan" && zoomIntent >= 0.6) nextGestureMode = "zoom";
+      else if (gestureMode === "zoom" && zoomIntent <= 0.4) nextGestureMode = "pan";
+      if (nextGestureMode !== gestureMode) directionRearmed = false;
+    } else if (gestureMode) {
+      directionRearmed = false;
+    } else if (panZoomMode === "gesture" && !gestureMode && originDistance > gestureSelectionRadius) {
+      if (zoomIntent >= 0.6) nextGestureMode = "zoom";
+      else if (zoomIntent <= 0.4) nextGestureMode = "pan";
+      if (nextGestureMode) directionRearmed = false;
+    }
+    if (panZoomMode === "gesture") {
+      if (!gestureIndicator) {
+        gestureIndicator = document.createElement("div");
+        gestureIndicator.className = "gesture-direction-dial hidden";
+        gestureIndicator.innerHTML = '<span class="dial-stage"><i class="dial-wheel pan-wheel"></i><i class="dial-wheel zoom-wheel"></i><b class="dial-origin-dot"></b></span><em></em>';
+        document.body.append(gestureIndicator);
+      }
+      const displayedGestureMode = nextGestureMode ?? gestureMode;
+      gestureIndicator.classList.toggle("hidden", displayedGestureMode === null && !directionRearmed);
+      gestureIndicator.classList.toggle("zooming", displayedGestureMode === "zoom");
+      gestureIndicator.classList.toggle("panning", displayedGestureMode === "pan");
+      const nearingSwitch = Boolean(gestureMode) && activeAxisDistance <= 38;
+      gestureIndicator.classList.toggle("switching", nearingSwitch || directionRearmed);
+      const panRoll = (moveEvent.clientX - originX) * 0.8;
+      const zoomRoll = (moveEvent.clientY - originY) * 0.8;
+      const originIntensity = Math.max(0.12, Math.min(1, 1 - originDistance / 260));
+      gestureIndicator.style.setProperty("--origin-intensity", originIntensity.toFixed(2));
+      const dotX = displayedGestureMode === "zoom"
+        ? Math.max(-10, Math.min(10, panRoll * 0.25))
+        : Math.max(-30, Math.min(30, panRoll));
+      const dotY = displayedGestureMode === "pan"
+        ? Math.max(-10, Math.min(10, zoomRoll * 0.25))
+        : Math.max(-30, Math.min(30, zoomRoll));
+      gestureIndicator.style.setProperty("--dot-x", `${dotX}px`);
+      gestureIndicator.style.setProperty("--dot-y", `${dotY}px`);
+      if (nextGestureMode === "pan") {
+        gestureIndicator.style.setProperty("--pan-roll", `${panRoll}px`);
+        gestureIndicator.style.setProperty("--pan-origin-offset", `${Math.max(-30, Math.min(30, panRoll))}px`);
+        gestureIndicator.style.setProperty("--pan-cross-offset", `${Math.max(-10, Math.min(10, zoomRoll * 0.25))}px`);
+      } else if (nextGestureMode === "zoom") {
+        gestureIndicator.style.setProperty("--zoom-roll", `${zoomRoll}px`);
+        gestureIndicator.style.setProperty("--zoom-origin-offset", `${Math.max(-30, Math.min(30, zoomRoll))}px`);
+        gestureIndicator.style.setProperty("--zoom-cross-offset", `${Math.max(-10, Math.min(10, panRoll * 0.25))}px`);
+      }
+      gestureIndicator.style.left = `${Math.max(8, Math.min(window.innerWidth - 104, moveEvent.clientX + 14))}px`;
+      gestureIndicator.style.top = `${Math.max(8, Math.min(window.innerHeight - 104, moveEvent.clientY - 48))}px`;
+      const readout = gestureIndicator.querySelector("em");
+      if (readout) readout.textContent = nearingSwitch || directionRearmed
+        ? `${displayedGestureMode === "zoom" ? "Zoom" : "Pan"} · Switch`
+        : nextGestureMode === "zoom" ? "Zoom" : "Pan";
+    }
+    if (nextGestureMode !== gestureMode && nextGestureMode === "zoom") {
+      zoomAnchorElapsed = panDuringPlayback
+        ? currentElapsed()
+        : elapsedAtCenteredHead(tracks, tracks.clientWidth / 2);
+      gestureOriginZoom = timelineZoom;
+      gestureOriginY = moveEvent.clientY;
+      timelinePanActive = false;
+      timelineHeadLocked = true;
+      tracks.classList.remove("head-unlocked", "playback-pan");
+      centerArrangementOnElapsed(zoomAnchorElapsed);
+    } else if (nextGestureMode !== gestureMode && nextGestureMode === "pan" && panDuringPlayback) {
+      timelinePanActive = true;
+      timelineHeadLocked = false;
+      tracks.classList.add("head-unlocked");
+    } else if (nextGestureMode !== gestureMode && nextGestureMode === null) {
+      timelinePanActive = false;
+      timelineHeadLocked = true;
+      tracks.classList.remove("head-unlocked", "playback-pan");
+      centerArrangementOnElapsed(panDuringPlayback ? currentElapsed() : pausedAt);
+    }
+    gestureMode = nextGestureMode;
+    const panGestureActive = panZoomMode !== "gesture" || gestureMode === "pan";
     tracks.classList.add("panning");
-    tracks.classList.toggle("playback-pan", panDuringPlayback && !verticalZoomOnly);
-    if (!verticalZoomOnly) tracks.scrollLeft -= moveEvent.clientX - lastClientX;
+    tracks.classList.toggle("playback-pan", panDuringPlayback && panGestureActive);
+    if (panGestureActive) tracks.scrollLeft -= moveEvent.clientX - lastClientX;
     lastClientX = moveEvent.clientX;
     const ghostClientX = tracks.getBoundingClientRect().left + tracks.clientWidth / 2;
-    const anchorElapsed = verticalZoomOnly ? panOriginElapsed : elapsedAtTimelinePointer(tracks, ghostClientX);
-    if (panZoomMode === "gesture") {
+    const anchorElapsed = gestureMode === "zoom" ? zoomAnchorElapsed : elapsedAtTimelinePointer(tracks, ghostClientX);
+    if (panZoomMode === "gesture" && gestureMode === "zoom") {
       const zoomRange = Math.max(1, gestureZoomBounds.max / Math.max(0.1, gestureZoomBounds.min));
-      const verticalTravel = (originY - moveEvent.clientY) / 240;
+      const verticalTravel = (gestureOriginY - moveEvent.clientY) / 240;
       const gestureZoom = gestureOriginZoom * Math.exp(Math.log(zoomRange) * verticalTravel);
       const nextZoom = clampTimelineZoom(gestureZoom, tracks);
       if (nextZoom !== timelineZoom) {
         timelineZoom = nextZoom;
         preferredTimelineZoom = timelineZoom;
-        applyTimelineZoomInPlace(tracks, panDuringPlayback ? currentElapsed() : pausedAt);
-        keepTimelineElapsedUnderPointer(tracks, anchorElapsed, ghostClientX);
+        applyTimelineZoomInPlace(tracks, zoomAnchorElapsed);
       }
     } else if (panZoomMode === "dynamic" && panDuringPlayback) {
       const previousZoom = timelineZoom;
       adaptTimelineZoomAtHead(tracks, anchorElapsed);
       if (timelineZoom !== previousZoom) keepTimelineElapsedUnderPointer(tracks, anchorElapsed, ghostClientX);
     }
-    if (panDuringPlayback) updatePanReleaseHead(tracks);
+    if (panDuringPlayback && panGestureActive) updatePanReleaseHead(tracks);
     if (panDuringPlayback) {
       updatePlayUi(currentElapsed());
     } else {
@@ -753,6 +835,7 @@ function beginTimelinePan(event: PointerEvent) {
     tracks.removeEventListener("pointerup", end);
     tracks.removeEventListener("pointercancel", end);
     tracks.classList.remove("panning", "playback-pan");
+    gestureIndicator?.remove();
     timelinePanActive = false;
     timelineHeadLocked = previousHeadLocked;
     tracks.classList.toggle("head-unlocked", !timelineHeadLocked);
@@ -762,7 +845,7 @@ function beginTimelinePan(event: PointerEvent) {
     suppressNextTimelineSeek = true;
     window.setTimeout(() => { suppressNextTimelineSeek = false; }, 350);
     if (panDuringPlayback && playing) {
-      if (verticalZoomOnly) {
+      if (panZoomMode === "gesture" && gestureMode !== "pan") {
         updatePlayUi(currentElapsed());
         return;
       }

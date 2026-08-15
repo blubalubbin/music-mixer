@@ -280,6 +280,18 @@ main{grid-column:2;grid-row:1;min-width:0;max-width:100%;height:100%}
 
 @media(prefers-reduced-motion:reduce){.app-shell,.app-shell.rail-collapsed .topbar{transition:none}}
 
+.gesture-direction-dial{--pan-roll:0px;--zoom-roll:0px;--pan-origin-offset:0px;--zoom-origin-offset:0px;--pan-cross-offset:0px;--zoom-cross-offset:0px;--dot-x:0px;--dot-y:0px;--origin-intensity:1;position:fixed;z-index:1000;display:grid;place-items:center;gap:4px;width:96px;height:96px;box-sizing:border-box;padding:6px;border:1px solid #383a37;border-radius:5px;background:#090a09;box-shadow:0 5px 18px #000a;color:#aaa;font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em;pointer-events:none;transition:opacity .1s ease}
+.gesture-direction-dial.hidden{opacity:0}
+.gesture-direction-dial .dial-stage{position:relative;display:block;width:70px;height:70px}
+.gesture-direction-dial .dial-wheel{position:relative;display:block;border:1px solid #484a46;border-radius:5px;background-color:#111;background-repeat:repeat;box-shadow:inset 0 0 7px #000,0 1px 0 #5555}
+.gesture-direction-dial .pan-wheel{position:absolute;left:0;top:20px;width:70px;height:30px;background-image:repeating-linear-gradient(90deg,#070807 0 3px,#292b28 3px 5px,#0d0e0d 5px 8px);background-position-x:var(--pan-roll)}
+.gesture-direction-dial .zoom-wheel{position:absolute;left:20px;top:0;width:30px;height:70px;background-image:repeating-linear-gradient(0deg,#070807 0 3px,#292b28 3px 5px,#0d0e0d 5px 8px);background-position-y:var(--zoom-roll)}
+.gesture-direction-dial .dial-origin-dot{position:absolute;z-index:3;left:50%;top:50%;width:6px;height:6px;border:1px solid #ff9a91;border-radius:50%;background:#d94b42;box-shadow:0 0 0 2px #090a09aa,0 0 6px #d94b4299;opacity:var(--origin-intensity);transform:translate(calc(-50% + var(--dot-x)),calc(-50% + var(--dot-y)));transition:transform .07s linear,opacity .1s linear}
+.gesture-direction-dial.panning .pan-wheel,.gesture-direction-dial.zooming .zoom-wheel{z-index:2}
+.gesture-direction-dial.panning .zoom-wheel,.gesture-direction-dial.zooming .pan-wheel{z-index:1}
+.gesture-direction-dial.switching .dial-wheel{opacity:.9}
+.gesture-direction-dial em{font:inherit;font-style:normal;color:#bbb}
+
 @media(max-width:700px){
   :root{--nav-rail-width:96px}
   .topbar{padding:20px 11px}
