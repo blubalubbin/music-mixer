@@ -31,6 +31,68 @@ export const EMPTY_PROJECT: MixProject = {
   segments: [],
 };
 
+export type ProjectParseResult =
+  | { ok: true; project: MixProject }
+  | { ok: false; error: string };
+
+export function parseMixProject(value: unknown): ProjectParseResult {
+  if (!isRecord(value) || value.version !== 1) return invalid("This is not a Music Mixer v1 project.");
+  if (typeof value.title !== "string" || !Array.isArray(value.sources) || !Array.isArray(value.segments)) {
+    return invalid("The project file is missing its title, sources, or segments.");
+  }
+
+  const sourceIds = new Set<string>();
+  const slots = new Set<number>();
+  const sources: Source[] = [];
+  for (const item of value.sources) {
+    if (!isRecord(item) || typeof item.id !== "string" || !item.id || typeof item.videoId !== "string"
+      || !/^[\w-]{11}$/.test(item.videoId) || typeof item.originalUrl !== "string"
+      || typeof item.title !== "string" || typeof item.slot !== "number" || !Number.isInteger(item.slot) || item.slot < 1 || item.slot > 9) {
+      return invalid("The project contains an invalid source video.");
+    }
+    if (sourceIds.has(item.id) || slots.has(item.slot)) return invalid("Source IDs and slots must be unique.");
+    sourceIds.add(item.id);
+    slots.add(item.slot);
+    sources.push({ id: item.id, slot: item.slot, videoId: item.videoId, originalUrl: item.originalUrl, title: item.title });
+  }
+
+  const segmentIds = new Set<string>();
+  const segments: Segment[] = [];
+  for (const item of value.segments) {
+    if (!isRecord(item) || typeof item.id !== "string" || !item.id || typeof item.sourceId !== "string"
+      || !sourceIds.has(item.sourceId) || !isFiniteNumber(item.sourceStartSeconds) || item.sourceStartSeconds < 0
+      || !isFiniteNumber(item.sourceEndSeconds) || item.sourceEndSeconds <= item.sourceStartSeconds
+      || (item.lane !== 0 && item.lane !== 1)
+      || (item.groupId !== undefined && (typeof item.groupId !== "string" || !item.groupId))) {
+      return invalid("The project contains an invalid timeline segment.");
+    }
+    if (segmentIds.has(item.id)) return invalid("Timeline segment IDs must be unique.");
+    segmentIds.add(item.id);
+    segments.push({
+      id: item.id,
+      sourceId: item.sourceId,
+      sourceStartSeconds: item.sourceStartSeconds,
+      sourceEndSeconds: item.sourceEndSeconds,
+      lane: item.lane,
+      ...(item.groupId ? { groupId: item.groupId } : {}),
+    });
+  }
+
+  return { ok: true, project: { version: 1, title: value.title.trim() || "Untitled mix", sources, segments } };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function invalid(error: string): ProjectParseResult {
+  return { ok: false, error };
+}
+
 export const SLOT_COLORS = [
   "#ff6047", "#ffb329", "#d6d936", "#58c77a", "#35c3bd",
   "#4fa6ff", "#8777ff", "#d168dc", "#f4619d",
