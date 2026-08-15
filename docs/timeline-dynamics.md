@@ -43,15 +43,15 @@ The zoom values are interpolated geometrically. This matters because zoom is mul
 
 The curve has two parts:
 
-1. **Entry to midpoint.** The timeline starts from the scale visible at the segment boundary and approaches the active segment's one-fifth target.
-2. **Midpoint to exit.** The timeline leaves the active target and approaches the following segment's target.
+1. **Previous midpoint to current midpoint.** The timeline moves from the previous segment's target scale toward the active segment's one-fifth target.
+2. **Current midpoint to next midpoint.** The timeline leaves the active target and approaches the following segment's target across both adjacent half-segments.
 
-A severe short-to-long change gets a stronger response after the Head crosses the boundary. The larger the scale difference, the more quickly the timeline begins pulling back. Gentler size changes use a gentler curve.
+A severe short-to-long change gets a moderately stronger response as the Head moves between the two scales. The transition spans the full distance between segment midpoints instead of being squeezed into half of the short segment. A smootherstep envelope keeps the beginning and end gradual, even when the durations differ sharply. Target scales are clamped to the timeline's current minimum and maximum zoom, and the curve is tied to the Head position so panning backward retraces the same scale change.
 
 ```mermaid
 flowchart LR
-    Short["Short segment<br/>close scale"] -->|"cross boundary"| LongStart["Long segment begins"]
-    LongStart -->|"contrast-aware pull-back"| LongMid["Long midpoint<br/>1/5 width"]
+    Short["Short midpoint<br/>close scale"] -->|"contrast-aware pull-back"| LongStart["Long segment begins"]
+    LongStart -->|"hold the target scale"| LongMid["Long midpoint<br/>1/5 width"]
     LongMid -->|"prepare for neighbour"| Following["Following segment scale"]
 ```
 

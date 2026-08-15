@@ -13,6 +13,7 @@ import {
 } from "./model";
 
 const STORAGE_KEY = "music-mixer-project-v1";
+const FRAME_BUFFERING_KEY = "music-mixer-frame-buffering-v1";
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 let project = loadProject();
@@ -30,7 +31,9 @@ let activePlaybackIndex = project.segments.length - 1;
 let playerGeneration = 0;
 let playerReady = false;
 let loadedVideoId: string | null = null;
+let loadedVideoHasFrame = false;
 let pauseWhenFrameAvailable = false;
+let frameBufferingEnabled = localStorage.getItem(FRAME_BUFFERING_KEY) !== "off";
 let sourceVideoPlaying = false;
 let activeVideoDuration = 0;
 let segmentDefinitionFrame = 0;
@@ -42,8 +45,6 @@ let captureSegmentId: string | null = null;
 let pendingCaptureSlot: number | null = null;
 let timelineZoom = 18;
 let preferredTimelineZoom = 18;
-let adaptiveZoomSegmentIndex = -1;
-let adaptiveZoomEntryScale = 18;
 const TIMELINE_COLUMN_MIN_WIDTH = 12;
 const TIMELINE_COLUMN_GAP = 6;
 const TIMELINE_MAX_ZOOM = 50; // 2 seconds per 100 pixels
@@ -225,7 +226,7 @@ function mixView() {
           <h2>${escapeHtml(source?.title ?? "Empty source")}</h2>
           ${source ? `<p class="mix-playback-status" role="status">Loading YouTube player…</p>` : ""}
           <div class="segment-controls">
-            <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · 0–9 scrub + mark · Space start / finish</button>
+            <button id="keyboard-capture" class="keyboard-capture" type="button">Keyboard ready · arrows scrub · Shift + arrows scrub 15s · Space start / finish</button>
             <div class="time-fields">
               <label>Start <span>seconds</span><input id="start-time" type="number" min="0" step="0.1" value="${startValue}" /></label>
               <span class="time-arrow">→</span>
@@ -236,7 +237,7 @@ function mixView() {
             <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
             <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
             <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
-            <p class="shortcut">Shortcuts: <kbd>←</kbd>/<kbd>→</kbd> scrub 1s · <kbd>0</kbd> start · <kbd>1</kbd>–<kbd>9</kbd> scrub + mark · <kbd>Space</kbd> start / finish · <kbd>Enter</kbd> add</p>
+            <p class="shortcut">Shortcuts: <kbd>←</kbd>/<kbd>→</kbd> scrub 1s · <kbd>Shift</kbd> + <kbd>←</kbd>/<kbd>→</kbd> scrub 15s · <kbd>0</kbd> start · <kbd>1</kbd>–<kbd>9</kbd> scrub + mark · <kbd>Space</kbd> start / finish · <kbd>Enter</kbd> add</p>
           </div>
         </section>
       </div>
@@ -253,7 +254,7 @@ function timelineView() {
   const zoomBounds = timelineZoomBounds(document.querySelector<HTMLElement>(".source-tracks"));
   return `
     <section class="timeline-section">
-      <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}${project.segments.length ? `<button class="restart-timeline" id="restart-timeline" type="button">Restart timeline</button><div class="segment-navigation" aria-label="Segment navigation"><button id="previous-segment" type="button" ${activePlaybackIndex <= 0 ? "disabled" : ""}>Previous segment <kbd>←</kbd></button><button id="next-segment" type="button" ${activePlaybackIndex >= project.segments.length - 1 ? "disabled" : ""}>Next segment <kbd>→</kbd></button></div>` : ""}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out" ${timelineZoom <= zoomBounds.min ? "disabled" : ""}>−</button><span>${formatZoomScale(timelineZoom)}</span><button id="zoom-in" aria-label="Zoom in" ${timelineZoom >= zoomBounds.max ? "disabled" : ""}>＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
+      <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}${project.segments.length ? `<button class="frame-buffer-toggle ${frameBufferingEnabled ? "enabled" : ""}" id="frame-buffer-toggle" type="button" aria-pressed="${frameBufferingEnabled}">Frame buffering · ${frameBufferingEnabled ? "On" : "Off"}</button><button class="restart-timeline" id="restart-timeline" type="button">Restart timeline</button><div class="segment-navigation" aria-label="Segment navigation"><button id="previous-segment" type="button" ${activePlaybackIndex <= 0 ? "disabled" : ""}>Previous segment <kbd>←</kbd></button><button id="next-segment" type="button" ${activePlaybackIndex >= project.segments.length - 1 ? "disabled" : ""}>Next segment <kbd>→</kbd></button></div>` : ""}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out" ${timelineZoom <= zoomBounds.min ? "disabled" : ""}>−</button><span>${formatZoomScale(timelineZoom)}</span><button id="zoom-in" aria-label="Zoom in" ${timelineZoom >= zoomBounds.max ? "disabled" : ""}>＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
       <div class="timeline source-tracks ${timelineHeadLocked ? "" : "head-unlocked"}" style="--track-count:${sources.length}" tabindex="0" aria-label="Arrangement timeline. Use left and right arrows for previous and next segment, and Space to play from the current segment.">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels(columnWidths)}</div>
         ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
@@ -412,6 +413,7 @@ function bindTimelineControls(root: ParentNode) {
   root.querySelector("#previous-segment")?.addEventListener("click", () => navigateSegment(-1));
   root.querySelector("#next-segment")?.addEventListener("click", () => navigateSegment(1));
   root.querySelector("#restart-timeline")?.addEventListener("click", restartTimeline);
+  root.querySelector("#frame-buffer-toggle")?.addEventListener("click", toggleFrameBuffering);
   root.querySelector("#zoom-out")?.addEventListener("click", () => changeTimelineZoom(-4));
   root.querySelector("#zoom-in")?.addEventListener("click", () => changeTimelineZoom(4));
   root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("scroll", (event) => {
@@ -431,6 +433,20 @@ function bindTimelineControls(root: ParentNode) {
   root.querySelector<HTMLElement>(".arrangement-head")?.addEventListener("pointerdown", beginArrangementScrub);
   root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("pointerdown", beginTimelinePan);
   root.querySelector<HTMLElement>(".source-tracks")?.addEventListener("click", seekArrangementFromTimelineClick);
+}
+
+function toggleFrameBuffering() {
+  frameBufferingEnabled = !frameBufferingEnabled;
+  localStorage.setItem(FRAME_BUFFERING_KEY, frameBufferingEnabled ? "on" : "off");
+  if (!frameBufferingEnabled && pauseWhenFrameAvailable) {
+    pauseWhenFrameAvailable = false;
+    youtubePlayer?.pauseVideo();
+  }
+  const button = document.querySelector<HTMLButtonElement>("#frame-buffer-toggle");
+  if (!button) return;
+  button.classList.toggle("enabled", frameBufferingEnabled);
+  button.setAttribute("aria-pressed", String(frameBufferingEnabled));
+  button.textContent = `Frame buffering · ${frameBufferingEnabled ? "On" : "Off"}`;
 }
 
 function navigateSegment(direction: -1 | 1) {
@@ -466,7 +482,6 @@ function restartTimeline() {
   arrangementScrollLeft = 0;
   timelineZoom = 18;
   preferredTimelineZoom = 18;
-  adaptiveZoomSegmentIndex = -1;
   initialTimelineFramed = false;
   saveProject();
   render();
@@ -617,11 +632,15 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
     updatePlaybackButtons();
     tick();
   } else {
-    pauseWhenFrameAvailable = true;
-    if (loadedVideoId === source.videoId) youtubePlayer.seekTo(options.startSeconds, true);
-    else {
+    if (loadedVideoId === source.videoId && loadedVideoHasFrame) {
+      youtubePlayer.seekTo(options.startSeconds, true);
+      youtubePlayer.pauseVideo();
+    } else {
       loadedVideoId = source.videoId;
-      youtubePlayer.loadVideoById(options);
+      loadedVideoHasFrame = false;
+      pauseWhenFrameAvailable = frameBufferingEnabled;
+      if (frameBufferingEnabled) youtubePlayer.loadVideoById(options);
+      else youtubePlayer.cueVideoById(options);
     }
     setPlaybackStatus(`Positioning preview at ${formatTime(pausedAt)}…`);
   }
@@ -636,9 +655,13 @@ function seekTimelinePreviewThrottled(elapsed: number) {
   if (!segment || !source) return;
   lastTimelinePanSeekAt = now;
   const sourceTimestamp = segment.sourceStartSeconds + Math.max(0, elapsed - segmentStart(index));
-  if (loadedVideoId !== source.videoId) {
+  if (loadedVideoId !== source.videoId || !loadedVideoHasFrame) {
     loadedVideoId = source.videoId;
-    youtubePlayer.cueVideoById({ videoId: source.videoId, startSeconds: sourceTimestamp, endSeconds: playbackEndSeconds(index) });
+    loadedVideoHasFrame = false;
+    pauseWhenFrameAvailable = frameBufferingEnabled;
+    const options = { videoId: source.videoId, startSeconds: sourceTimestamp, endSeconds: playbackEndSeconds(index) };
+    if (frameBufferingEnabled) youtubePlayer.loadVideoById(options);
+    else youtubePlayer.cueVideoById(options);
   } else {
     youtubePlayer.seekTo(sourceTimestamp, true);
     youtubePlayer.pauseVideo();
@@ -1093,6 +1116,7 @@ async function mountPlayerForCurrentView() {
   } catch { /* The preceding render may already have removed its iframe. */ }
   youtubePlayer = null;
   loadedVideoId = null;
+  loadedVideoHasFrame = false;
   pauseWhenFrameAvailable = false;
   setPlaybackStatus("Loading YouTube player…");
   try {
@@ -1130,6 +1154,7 @@ async function mountPlayerForCurrentView() {
           updateSegmentDefinitionRuler();
           if (event.data === 3) setPlaybackStatus("Buffering…");
           if (event.data === 1) {
+            loadedVideoHasFrame = true;
             if (pauseWhenFrameAvailable) {
               pauseWhenFrameAvailable = false;
               youtubePlayer?.pauseVideo();
@@ -1302,7 +1327,6 @@ function frameInitialTimeline() {
   if (!tracks || !project.segments.length) return;
   timelineZoom = timelineZoomBounds(tracks).min;
   preferredTimelineZoom = timelineZoom;
-  adaptiveZoomSegmentIndex = -1;
   initialTimelineFramed = true;
   refreshTimeline(false);
   requestAnimationFrame(centerArrangementOnHead);
@@ -1314,7 +1338,6 @@ function changeTimelineZoom(delta: number) {
   const factor = delta < 0 ? 0.8 : 1.25;
   timelineZoom = clampTimelineZoom(timelineZoom * factor, tracks);
   preferredTimelineZoom = timelineZoom;
-  adaptiveZoomSegmentIndex = -1;
   refreshTimeline(false);
   requestAnimationFrame(() => centerArrangementOnElapsed(elapsedAtHead));
 }
@@ -1356,34 +1379,36 @@ function segmentMidpointZoom(index: number, tracks: HTMLElement) {
     tracks.clientWidth - (track?.offsetLeft ?? 0) - TIMELINE_COLUMN_GAP
   );
   const targetSegmentWidth = visibleTrackWidth / 5;
-  return Math.min(
+  return clampTimelineZoom(Math.min(
     TIMELINE_MAX_ZOOM,
     Math.max(0.1, targetSegmentWidth / Math.max(0.1, segmentDuration(segment)))
-  );
+  ), tracks);
 }
 
 function adaptTimelineZoomAtHead(tracks: HTMLElement, elapsed: number) {
   const index = findSegmentIndex(elapsed);
   const segment = project.segments[index];
   if (!segment) return;
-  if (index !== adaptiveZoomSegmentIndex) {
-    adaptiveZoomSegmentIndex = index;
-    adaptiveZoomEntryScale = timelineZoom;
-  }
-  const duration = Math.max(0.1, segmentDuration(segment));
-  const segmentProgress = Math.max(0, Math.min(1, (elapsed - segmentStart(index)) / duration));
-  const firstHalf = segmentProgress <= 0.5;
-  const halfProgress = firstHalf ? segmentProgress * 2 : (segmentProgress - 0.5) * 2;
-  const currentZoom = segmentMidpointZoom(index, tracks);
-  const nextIndex = Math.min(project.segments.length - 1, index + 1);
-  const fromZoom = firstHalf ? adaptiveZoomEntryScale : currentZoom;
-  const toZoom = firstHalf ? currentZoom : segmentMidpointZoom(nextIndex, tracks);
+  const midpoint = segmentStart(index) + segmentDuration(segment) / 2;
+  const movingTowardCurrent = elapsed <= midpoint;
+  const fromIndex = movingTowardCurrent ? Math.max(0, index - 1) : index;
+  const toIndex = movingTowardCurrent ? index : Math.min(project.segments.length - 1, index + 1);
+  const fromMidpoint = segmentStart(fromIndex) + segmentDuration(project.segments[fromIndex]) / 2;
+  const toMidpoint = segmentStart(toIndex) + segmentDuration(project.segments[toIndex]) / 2;
+  const transitionDuration = Math.max(0.1, toMidpoint - fromMidpoint);
+  const transitionProgress = fromIndex === toIndex
+    ? 1
+    : Math.max(0, Math.min(1, (elapsed - fromMidpoint) / transitionDuration));
+  const fromZoom = segmentMidpointZoom(fromIndex, tracks);
+  const toZoom = segmentMidpointZoom(toIndex, tracks);
   const zoomContrast = Math.abs(Math.log(Math.max(0.1, toZoom) / Math.max(0.1, fromZoom)));
-  const responseStrength = Math.min(6, 2 + zoomContrast);
+  const responseStrength = Math.min(1.8, 1 + zoomContrast * 0.2);
   const zoomingOut = toZoom < fromZoom;
-  const curvedProgress = firstHalf && zoomingOut
-    ? 1 - Math.pow(1 - halfProgress, responseStrength)
-    : halfProgress * halfProgress * (3 - 2 * halfProgress);
+  const contrastProgress = zoomingOut
+    ? 1 - Math.pow(1 - transitionProgress, responseStrength)
+    : transitionProgress;
+  const curvedProgress = contrastProgress * contrastProgress * contrastProgress
+    * (contrastProgress * (contrastProgress * 6 - 15) + 10);
   const nextZoom = Number(Math.exp(
     Math.log(Math.max(0.1, fromZoom))
     + (Math.log(Math.max(0.1, toZoom)) - Math.log(Math.max(0.1, fromZoom))) * curvedProgress
@@ -1773,7 +1798,8 @@ document.addEventListener("keydown", (event) => {
   }
   if (mode === "mix" && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
     event.preventDefault();
-    scrubActiveVideo(event.key === "ArrowLeft" ? -1 : 1);
+    const scrubDistance = event.shiftKey ? 15 : 1;
+    scrubActiveVideo(event.key === "ArrowLeft" ? -scrubDistance : scrubDistance);
     return;
   }
   if (event.key === "0" && mode === "mix") { event.preventDefault(); markMomentAtScrubPoint(0); return; }

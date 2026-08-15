@@ -44,6 +44,7 @@ stateDiagram-v2
     TimelineFocus --> TimelineFocus: Left or Right = adjacent segment
     TimelineFocus --> TimelineFocus: Space = play arrangement
     SourceFocus --> SourceFocus: Left or Right = scrub source by 1 second
+    SourceFocus --> SourceFocus: Shift plus Left or Right = scrub source by 15 seconds
     SourceFocus --> SourceFocus: Space = live capture action
 ```
 
