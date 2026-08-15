@@ -231,7 +231,7 @@ function timelineView() {
       <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div><div class="timeline-tools">${selectionTools()}<div class="zoom-controls" aria-label="Moment zoom"><button id="zoom-out" aria-label="Zoom out">−</button><span>${timelineZoom}px/s</span><button id="zoom-in" aria-label="Zoom in">＋</button></div>${project.segments.length ? `<button class="primary" id="arrangement-play">${playing ? "Pause" : "Play arrangement"} <span>${playing ? "Ⅱ" : "▶"}</span></button>` : ""}</div></div>
       <div class="timeline source-tracks">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels()}</div>
-        ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
+        ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
         ${groupRegions(columnWidths)}
         ${project.segments.length ? `<button class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" type="button" aria-label="Drag arrangement preview head" aria-valuemin="0" aria-valuemax="${duration.toFixed(1)}" aria-valuenow="${elapsed.toFixed(1)}"></button>` : ""}
       </div>
@@ -467,15 +467,16 @@ function selectMoment(event: MouseEvent) {
 }
 
 function beginMarqueeSelection(event: PointerEvent) {
-  if (event.button !== 0 || !event.shiftKey) return;
+  if (event.button !== 0) return;
   const target = event.target as HTMLElement;
-  if (target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment")) return;
+  const startedOnSegment = Boolean(target.closest(".segment"));
+  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment")) return;
 
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
   const originX = event.clientX;
   const originY = event.clientY;
-  const selectionBeforeDrag = new Set(selectedMomentIds);
+  const selectionBeforeDrag = event.shiftKey ? new Set(selectedMomentIds) : new Set<string>();
   const marquee = document.createElement("div");
   marquee.className = "selection-marquee";
   let dragging = false;
@@ -649,15 +650,18 @@ function editSegment(action: string, id: string) {
   render();
 }
 
-function reorderSegment(fromId: string, toId: string) {
+function reorderSegment(fromId: string, toId: string, draggedIds?: Set<string>, placeAfter = false) {
   const fromSegment = project.segments.find((segment) => segment.id === fromId);
   if (!fromSegment || !project.segments.some((segment) => segment.id === toId)) return;
-  const moving = fromSegment.groupId ? project.segments.filter((segment) => segment.groupId === fromSegment.groupId) : [fromSegment];
+  const moving = draggedIds
+    ? project.segments.filter((segment) => draggedIds.has(segment.id))
+    : fromSegment.groupId ? project.segments.filter((segment) => segment.groupId === fromSegment.groupId) : [fromSegment];
   if (moving.some((segment) => segment.id === toId)) return;
   const movingIds = new Set(moving.map((segment) => segment.id));
   const remaining = project.segments.filter((segment) => !movingIds.has(segment.id));
   const targetIndex = remaining.findIndex((segment) => segment.id === toId);
-  remaining.splice(targetIndex < 0 ? remaining.length : targetIndex, 0, ...moving);
+  const insertionIndex = targetIndex < 0 ? remaining.length : targetIndex + (placeAfter ? 1 : 0);
+  remaining.splice(insertionIndex, 0, ...moving);
   project.segments = remaining;
   saveProject();
   if (mode === "mix") refreshTimeline(false);
@@ -670,31 +674,70 @@ function beginSegmentReorder(event: PointerEvent) {
   if ((event.target as HTMLElement).closest("button")) return;
   const fromId = card.dataset.segment;
   if (!fromId) return;
+  const fromSegment = project.segments.find((segment) => segment.id === fromId);
+  const movingIds = selectedMomentIds.has(fromId) && selectedMomentIds.size > 1
+    ? new Set(selectedMomentIds)
+    : new Set(fromSegment?.groupId
+      ? project.segments.filter((segment) => segment.groupId === fromSegment.groupId).map((segment) => segment.id)
+      : [fromId]);
+  const movingCards = [...document.querySelectorAll<HTMLElement>(".segment[data-segment]")]
+    .filter((item) => Boolean(item.dataset.segment && movingIds.has(item.dataset.segment)));
   const originX = event.clientX;
   const originY = event.clientY;
   let dragging = false;
+  let dropTarget: HTMLElement | null = null;
+  let dropColumn: HTMLElement[] = [];
+  let placeAfter = false;
   card.setPointerCapture(event.pointerId);
   const move = (moveEvent: PointerEvent) => {
     if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) > 6) {
       dragging = true;
       card.dataset.dragged = "true";
-      card.classList.add("dragging");
+      movingCards.forEach((item) => item.classList.add("dragging"));
+    }
+    if (!dragging) return;
+    const deltaX = moveEvent.clientX - originX;
+    const deltaY = moveEvent.clientY - originY;
+    movingCards.forEach((item) => { item.style.transform = `translate3d(${deltaX}px,${deltaY}px,0)`; });
+    dropTarget?.classList.remove("drop-target");
+    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
+    const targets = [...document.querySelectorAll<HTMLElement>(".segment[data-segment]")]
+      .filter((item) => Boolean(item.dataset.segment && !movingIds.has(item.dataset.segment)));
+    dropTarget = targets.sort((a, b) => {
+      const aBounds = a.getBoundingClientRect();
+      const bBounds = b.getBoundingClientRect();
+      return Math.abs(moveEvent.clientX - (aBounds.left + aBounds.width / 2))
+        - Math.abs(moveEvent.clientX - (bBounds.left + bBounds.width / 2));
+    })[0] ?? null;
+    if (dropTarget) {
+      placeAfter = moveEvent.clientX > dropTarget.getBoundingClientRect().left + dropTarget.getBoundingClientRect().width / 2;
+      dropTarget.classList.add("drop-target");
+      dropTarget.classList.toggle("drop-after", placeAfter);
+      dropColumn = [...document.querySelectorAll<HTMLElement>(`[data-index="${dropTarget.dataset.index}"]`)]
+        .filter((item) => !item.classList.contains("dragging"));
+      dropColumn.forEach((item) => {
+        item.classList.add("drop-column");
+        item.classList.toggle("drop-after", placeAfter);
+      });
     }
   };
-  const end = (endEvent: PointerEvent) => {
+  const end = () => {
     card.removeEventListener("pointermove", move);
     card.removeEventListener("pointerup", end);
     card.removeEventListener("pointercancel", cancel);
-    card.classList.remove("dragging");
+    movingCards.forEach((item) => { item.classList.remove("dragging"); item.style.removeProperty("transform"); });
+    dropTarget?.classList.remove("drop-target", "drop-after");
+    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
     if (!dragging) return;
-    const target = document.elementFromPoint(endEvent.clientX, endEvent.clientY)?.closest<HTMLElement>("[data-segment]");
-    if (target?.dataset.segment) reorderSegment(fromId, target.dataset.segment);
+    if (dropTarget?.dataset.segment) reorderSegment(fromId, dropTarget.dataset.segment, movingIds, placeAfter);
   };
   const cancel = () => {
     card.removeEventListener("pointermove", move);
     card.removeEventListener("pointerup", end);
     card.removeEventListener("pointercancel", cancel);
-    card.classList.remove("dragging");
+    movingCards.forEach((item) => { item.classList.remove("dragging"); item.style.removeProperty("transform"); });
+    dropTarget?.classList.remove("drop-target", "drop-after");
+    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
   };
   card.addEventListener("pointermove", move);
   card.addEventListener("pointerup", end);

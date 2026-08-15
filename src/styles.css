@@ -120,7 +120,11 @@ main{min-height:0;overflow:hidden}
 .track-empty{margin:auto;color:#42433f;font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em}
 .segment{position:relative;width:100%;min-width:0;overflow:hidden;display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-rows:1fr;padding:7px 7px 15px;border-top:0;border-left:4px solid var(--slot-color);gap:4px;cursor:grab;user-select:none;-webkit-user-select:none}
 .segment:active{cursor:grabbing}
-.segment.dragging{opacity:.55;outline:2px solid var(--slot-color);outline-offset:-2px}
+.segment.dragging{z-index:10;pointer-events:none;opacity:.72;outline:2px solid var(--slot-color);outline-offset:-2px;box-shadow:0 8px 20px #0009;transition:transform 55ms linear}
+.segment.drop-target::before{content:"";position:absolute;z-index:8;top:0;bottom:0;left:-3px;width:4px;background:#fff;box-shadow:0 0 8px #fff}
+.segment.drop-target.drop-after::before{left:auto;right:-3px}
+.drop-column{box-shadow:inset 3px 0 0 #fff!important}
+.drop-column.drop-after{box-shadow:inset -3px 0 0 #fff!important}
 .segment.selected{outline:2px solid #fff;outline-offset:-2px;background:#292a28}
 .selection-marquee{position:fixed;z-index:1000;pointer-events:none;border:1px solid #fff;background:rgba(255,255,255,.12);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .group-region{position:absolute;z-index:6;pointer-events:none;top:34px;bottom:5px;left:calc(10px + var(--track-label-width) + var(--group-left));width:var(--group-width);border:2px solid var(--group-color);box-shadow:inset 0 0 0 1px #0008,0 0 8px #0008}
