@@ -33,6 +33,7 @@ let mixFocusContext: "video" | "timeline" = "video";
 let timelineSettingsOpen = false;
 let startValue = 0;
 let endValue = 8;
+let rangeSegmentId: string | null = null;
 let playing = false;
 let playStartedAt = 0;
 let pausedAt = totalDuration(project.segments);
@@ -100,6 +101,9 @@ type YouTubePlayer = {
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   getDuration(): number;
+  getPlaybackRate(): number;
+  getAvailablePlaybackRates(): number[];
+  setPlaybackRate(rate: number): void;
   destroy(): void;
 };
 
@@ -221,6 +225,7 @@ function render() {
     if (mode === "mix") updateKeyboardContextHelp(mixFocusContext);
     const tracks = document.querySelector<HTMLElement>(".source-tracks");
     if (tracks) syncTimelineGutters(tracks);
+    if (mode === "mix") syncRangeEditorToHighlightedSegment();
     if (mode === "mix" && project.segments.length && !initialTimelineFramed) frameInitialTimeline();
     else if (mode === "mix") restoreArrangementScroll();
   });
@@ -338,21 +343,52 @@ function mixView() {
 
 function timelineView() {
   const duration = totalDuration(project.segments);
-  const sources = [...project.sources].sort((a, b) => a.slot - b.slot);
   const columnWidths = timelineColumnWidths();
   const columns = columnWidths.map((width) => `${width}px`).join(" ");
   const elapsed = currentElapsed();
+  const sources = sourcesByDistanceToHead(elapsed);
   return `
     <section class="timeline-section">
-      <div class="timeline source-tracks ${timelineHeadLocked ? "" : "head-unlocked"}" style="--track-count:${sources.length};--timeline-track-height:${34 + Math.min(sources.length, 4) * 49}px;--timeline-track-height-mobile:${34 + Math.min(sources.length, 4) * 43}px" tabindex="0" aria-label="Arrangement timeline. Use left and right arrows for previous and next segment, and Space to play from the current segment.">
+      <div class="timeline source-tracks ${timelineHeadLocked ? "" : "head-unlocked"} ${sources.length > 4 ? "track-scrollable" : ""}" style="--track-count:${sources.length};--timeline-track-height:${34 + Math.min(sources.length, 4) * 49}px;--timeline-track-height-mobile:${34 + Math.min(sources.length, 4) * 43}px" tabindex="0" aria-label="Arrangement timeline. Use left and right arrows for previous and next segment, and Space to play from the current segment.">
         <div class="time-label">TIME</div><div class="time-axis" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}">${timeAxisLabels(columnWidths)}</div>
-        ${sources.map((source) => `<div class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}"><button class="track-select" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><span class="track-actions"><button data-track-edit="${source.slot}" aria-label="Edit ${escapeHtml(source.title)}">Edit</button></span></div><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
+        ${sources.map((source) => `<div class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-track-source="${source.id}"><button class="track-select" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><span class="track-actions"><button data-track-edit="${source.slot}" aria-label="Edit source ${escapeHtml(source.title)}" title="Edit source">Edit source</button></span></div><div class="source-track" style="grid-template-columns:${columns || "minmax(190px, 1fr)"}" data-source="${source.id}">${project.segments.length ? project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : `<span class="moment-gap" data-index="${index}" aria-hidden="true"></span>`).join("") : `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
         ${groupRegions(columnWidths)}
         ${project.segments.length ? `<div class="pan-release-head" aria-hidden="true"><span>Release</span></div>` : ""}
         ${project.segments.length ? `<button class="arrangement-head ${playing ? "playing" : ""}" style="--head-x:${timelinePosition(elapsed, columnWidths)}px" type="button" aria-label="Drag arrangement preview head" aria-valuemin="0" aria-valuemax="${duration.toFixed(1)}" aria-valuenow="${elapsed.toFixed(1)}"></button>` : ""}
       </div>
       <button class="add-track-video" data-mode="browse"><span>＋</span> Add track video</button>
     </section>`;
+}
+
+function sourcesByDistanceToHead(elapsed: number) {
+  const distances = new Map<string, number>();
+  let cursor = 0;
+  for (const segment of project.segments) {
+    const end = cursor + segmentDuration(segment);
+    const distance = elapsed < cursor ? cursor - elapsed : elapsed > end ? elapsed - end : 0;
+    distances.set(segment.sourceId, Math.min(distances.get(segment.sourceId) ?? Infinity, distance));
+    cursor = end;
+  }
+  return [...project.sources].sort((a, b) =>
+    (distances.get(a.id) ?? Infinity) - (distances.get(b.id) ?? Infinity) || a.slot - b.slot
+  );
+}
+
+function reorderTracksByDistanceToHead(elapsed: number) {
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (!tracks || tracks.querySelector(".segment.dragging, .segment.trimming") || tracks.classList.contains("panning")) return;
+  const ordered = sourcesByDistanceToHead(elapsed);
+  const current = [...tracks.querySelectorAll<HTMLElement>(":scope > .source-track")].map((track) => track.dataset.source);
+  if (ordered.every((source, index) => source.id === current[index])) return;
+  const anchor = tracks.querySelector(":scope > .group-region, :scope > .pan-release-head, :scope > .arrangement-head");
+  const labels = [...tracks.querySelectorAll<HTMLElement>(":scope > .track-label[data-track-source]")];
+  const rows = [...tracks.querySelectorAll<HTMLElement>(":scope > .source-track[data-source]")];
+  for (const source of ordered) {
+    const label = labels.find((item) => item.dataset.trackSource === source.id);
+    const row = rows.find((item) => item.dataset.source === source.id);
+    if (label) tracks.insertBefore(label, anchor);
+    if (row) tracks.insertBefore(row, anchor);
+  }
 }
 
 function timelineToolbar(zoomBounds: { min: number; max: number }) {
@@ -381,7 +417,8 @@ function selectionTools() {
 }
 
 function segmentDefinitionRuler() {
-  const source = sourceForSlot(selectedSlot);
+  const rangeSegment = rangeSegmentId ? project.segments.find((segment) => segment.id === rangeSegmentId) : undefined;
+  const source = rangeSegment ? sourceForSegment(rangeSegment) : sourceForSlot(selectedSlot);
   const sourceSegments = source ? project.segments.filter((segment) => segment.sourceId === source.id) : [];
   const latestSegmentEnd = sourceSegments.reduce((maximum, segment) => Math.max(maximum, segment.sourceEndSeconds), 0);
   const total = Math.max(activeVideoDuration, endValue, latestSegmentEnd, 1);
@@ -389,7 +426,7 @@ function segmentDefinitionRuler() {
   const endPercent = Math.min(100, Math.max(startPercent, endValue / total * 100));
   return `<div class="segment-definition" aria-label="Segment from ${formatTime(startValue)} to ${formatTime(endValue)} of ${formatTime(total)}">
     <div class="definition-labels"><span>Clip range · ${sourceSegments.length} timeline moment${sourceSegments.length === 1 ? "" : "s"}</span><span>${formatTime(startValue)} → ${formatTime(endValue)} / ${formatTime(total)}</span></div>
-    <div class="definition-ruler"><i style="left:${startPercent}%;width:${endPercent - startPercent}%"></i><button type="button" class="definition-start" data-range-bound="start" style="left:${startPercent}%" aria-label="Drag clip start, currently ${formatTime(startValue)}"><span>${formatTime(startValue)}</span></button><button type="button" class="definition-end" data-range-bound="end" style="left:${endPercent}%" aria-label="Drag clip end, currently ${formatTime(endValue)}"><span>${formatTime(endValue)}</span></button></div>
+    <div class="definition-ruler"><i class="definition-range" data-range-bound="range" style="left:${startPercent}%;width:${endPercent - startPercent}%" aria-label="Drag clip range, currently ${formatTime(startValue)} to ${formatTime(endValue)}"></i><button type="button" class="definition-start" data-range-bound="start" style="left:${startPercent}%" aria-label="Drag clip start, currently ${formatTime(startValue)}"><span>${formatTime(startValue)}</span></button><button type="button" class="definition-end" data-range-bound="end" style="left:${endPercent}%" aria-label="Drag clip end, currently ${formatTime(endValue)}"><span>${formatTime(endValue)}</span></button></div>
     <div class="source-segment-points" aria-label="Timeline moments from this source">${sourceSegments.map((segment, index) => {
       const left = Math.min(100, Math.max(0, segment.sourceStartSeconds / total * 100));
       const right = Math.min(100, Math.max(left, segment.sourceEndSeconds / total * 100));
@@ -404,6 +441,40 @@ function updateSegmentDefinitionRuler() {
   const shell = document.createElement("div");
   shell.innerHTML = segmentDefinitionRuler();
   current.replaceWith(shell.firstElementChild!);
+}
+
+function syncRangeEditorToHighlightedSegment() {
+  if (mode !== "mix" || captureSlot !== null) return;
+  const segment = project.segments[activePlaybackIndex];
+  const ruler = document.querySelector<HTMLElement>(".segment-definition");
+  if (!segment || !ruler || ruler.querySelector(".dragging")) return;
+  if (rangeSegmentId === segment.id && startValue === segment.sourceStartSeconds && endValue === segment.sourceEndSeconds) return;
+  rangeSegmentId = segment.id;
+  startValue = segment.sourceStartSeconds;
+  endValue = segment.sourceEndSeconds;
+  updateSegmentDefinitionRuler();
+}
+
+function updateRangeSegmentFromEditor(commit: boolean) {
+  if (!rangeSegmentId || captureSlot !== null) return;
+  const segment = project.segments.find((item) => item.id === rangeSegmentId);
+  if (!segment || !Number.isFinite(startValue) || !Number.isFinite(endValue)) return;
+  const nextStart = Math.max(0, Math.min(startValue, endValue - 0.1));
+  const nextEnd = Math.max(nextStart + 0.1, endValue);
+  if (segment.sourceStartSeconds === nextStart && segment.sourceEndSeconds === nextEnd) return;
+  const index = project.segments.indexOf(segment);
+  const offset = index === activePlaybackIndex ? Math.max(0, pausedAt - segmentStart(index)) : 0;
+  segment.sourceStartSeconds = Number(nextStart.toFixed(2));
+  segment.sourceEndSeconds = Number(nextEnd.toFixed(2));
+  if (index === activePlaybackIndex) pausedAt = segmentStart(index) + Math.min(offset, segmentDuration(segment));
+  const tracks = document.querySelector<HTMLElement>(".source-tracks");
+  if (tracks) {
+    if (insertionPanZoomMode === "dynamic") adaptTimelineZoomAtHead(tracks, pausedAt, "dynamic", true);
+    else applyTimelineZoomInPlace(tracks, pausedAt);
+  }
+  updateSegmentBar(document.querySelector<HTMLElement>(`.segment[data-segment="${segment.id}"]`), segment);
+  updateArrangementSummary();
+  if (commit) saveProject();
 }
 
 function timeAxisLabels(widths: number[]) {
@@ -461,7 +532,7 @@ function panningTimeLabels(elapsed: number) {
   const segment = project.segments[index];
   const timelineLabel = `TL ${formatTime(boundedElapsed)}`;
   if (!segment) return [timelineLabel, "YT —"];
-  const youtubeTime = segment.sourceStartSeconds + Math.max(0, boundedElapsed - segmentStart(index));
+  const youtubeTime = segment.sourceStartSeconds + Math.max(0, boundedElapsed - segmentStart(index)) * segmentPlaybackRate(segment);
   return [timelineLabel, `YT ${formatTime(youtubeTime)}`];
 }
 
@@ -505,16 +576,17 @@ function segmentCard(segment: Segment, index: number) {
   const source = sourceForSegment(segment);
   const slot = source?.slot ?? 1;
   const duration = segmentDuration(segment);
+  const sourceDuration = segment.sourceEndSeconds - segment.sourceStartSeconds;
+  const rate = segmentPlaybackRate(segment);
   return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""} ${lastAddedMomentId === segment.id ? "last-added" : ""} ${captureSegmentId === segment.id ? "capturing" : ""} ${index === activePlaybackIndex ? "under-head" : ""} ${playing && index === activePlaybackIndex ? "currently-playing" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" data-index="${index}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
     ${segment.groupId ? `<span class="group-badge" title="Grouped moment">G</span>` : ""}
-    <span class="segment-label" title="YouTube start ${formatTime(segment.sourceStartSeconds)} · length ${duration.toFixed(1)} seconds">${formatTime(segment.sourceStartSeconds)} · ${duration.toFixed(1)}s</span>
+    <span class="segment-label" title="YouTube start ${formatTime(segment.sourceStartSeconds)} · ${sourceDuration.toFixed(1)} source seconds at ${rate}× · ${duration.toFixed(1)} timeline seconds">${formatTime(segment.sourceStartSeconds)} · ${duration.toFixed(1)}s</span>
+    <button class="speed-toggle ${rate > 1 ? "active" : ""}" data-action="speed" data-id="${segment.id}" aria-label="Change segment speed, currently ${rate} times" title="Playback speed">${rate}×</button>
     <button data-action="duplicate" data-id="${segment.id}" aria-label="Duplicate segment">⧉</button>
     <button data-action="delete" data-id="${segment.id}" aria-label="Delete segment">×</button>
-    <div class="duration-bar" aria-label="${duration.toFixed(1)} second moment">
-      <button class="trim-handle trim-start" data-trim="start" data-id="${segment.id}" aria-label="Drag to change segment start"></button>
-      <span><i></i><span class="trim-crop trim-crop-start"></span><span class="trim-crop trim-crop-end"></span><em>${duration.toFixed(1)}s</em>${lastAddedMomentId === segment.id ? `<small class="head-insert-note">Added at timeline head</small>` : ""}</span>
-      <button class="trim-handle trim-end" data-trim="end" data-id="${segment.id}" aria-label="Drag to change segment end"></button>
+    <div class="duration-bar" aria-label="${duration.toFixed(1)} second moment at ${rate} times speed">
+      <span><i></i><em>${duration.toFixed(1)}s</em>${lastAddedMomentId === segment.id ? `<small class="head-insert-note">Added at timeline head</small>` : ""}</span>
     </div>
   </article>`;
 }
@@ -572,26 +644,44 @@ function beginClipRangeDrag(event: Event) {
   const ruler = handle?.closest<HTMLElement>(".definition-ruler");
   if (!handle || !ruler) return;
   pointerEvent.preventDefault();
-  const bound = handle.dataset.rangeBound as "start" | "end";
+  const bound = handle.dataset.rangeBound as "start" | "end" | "range";
+  if (bound === "start") updateKeyboardContextHelp("video");
   const total = Math.max(activeVideoDuration, endValue, 1);
+  const originalStart = startValue;
+  const originalEnd = endValue;
+  const originalDuration = Math.max(0, originalEnd - originalStart);
+  const rulerBounds = ruler.getBoundingClientRect();
+  const originTime = (pointerEvent.clientX - rulerBounds.left) / Math.max(1, rulerBounds.width) * total;
+  cancelAnimationFrame(segmentDefinitionFrame);
   handle.setPointerCapture(pointerEvent.pointerId);
   handle.classList.add("dragging");
 
   const move = (moveEvent: PointerEvent) => {
     const bounds = ruler.getBoundingClientRect();
     const time = Math.max(0, Math.min(total, (moveEvent.clientX - bounds.left) / Math.max(1, bounds.width) * total));
-    if (bound === "start") startValue = Math.min(Math.max(0, time), Math.max(0, endValue - 0.1));
+    if (bound === "range") {
+      const proposedStart = originalStart + time - originTime;
+      startValue = Math.max(0, Math.min(total - originalDuration, proposedStart));
+      endValue = startValue + originalDuration;
+    } else if (bound === "start") {
+      startValue = Math.max(0, Math.min(time, endValue - 0.1));
+    }
     else endValue = Math.max(Math.min(total, time), Math.min(total, startValue + 0.1));
     startValue = Number(startValue.toFixed(1));
     endValue = Number(endValue.toFixed(1));
+    updateRangeSegmentFromEditor(false);
+    if (bound !== "end" && youtubePlayer && playerReady) youtubePlayer.seekTo(startValue, false);
     updateClipRangeDisplay(total);
   };
   const end = () => {
+    if (bound !== "end" && youtubePlayer && playerReady) youtubePlayer.seekTo(startValue, true);
     handle.classList.remove("dragging");
     handle.removeEventListener("pointermove", move);
     handle.removeEventListener("pointerup", end);
     handle.removeEventListener("pointercancel", end);
+    updateRangeSegmentFromEditor(true);
     updateSegmentDefinitionRuler();
+    if (sourceVideoPlaying) animateSegmentDefinition();
   };
   handle.addEventListener("pointermove", move);
   handle.addEventListener("pointerup", end);
@@ -607,7 +697,11 @@ function updateClipRangeDisplay(total: number) {
   const range = ruler.querySelector<HTMLElement>("i");
   const start = ruler.querySelector<HTMLButtonElement>(".definition-start");
   const end = ruler.querySelector<HTMLButtonElement>(".definition-end");
-  if (range) { range.style.left = `${startPercent}%`; range.style.width = `${endPercent - startPercent}%`; }
+  if (range) {
+    range.style.left = `${startPercent}%`;
+    range.style.width = `${endPercent - startPercent}%`;
+    range.setAttribute("aria-label", `Drag clip range, currently ${formatTime(startValue)} to ${formatTime(endValue)}`);
+  }
   if (start) { start.style.left = `${startPercent}%`; start.setAttribute("aria-label", `Drag clip start, currently ${formatTime(startValue)}`); }
   if (end) { end.style.left = `${endPercent}%`; end.setAttribute("aria-label", `Drag clip end, currently ${formatTime(endValue)}`); }
   const labels = definition.querySelectorAll<HTMLElement>(".definition-labels span");
@@ -707,7 +801,7 @@ function updateGuidedVideoActions() {
     next?.classList.remove("guided-muted");
     next?.classList.add("guided-active");
   }
-  play.textContent = sourceVideoPlaying ? (freePlaying ? "Pause video · Space" : "Pause video") : "Play video";
+  play.textContent = sourceVideoPlaying ? (freePlaying && videoContext ? "Pause video · Space" : "Pause video") : "Play video";
   start.textContent = startReady && videoContext ? "Set playhead start · Space" : "Set playhead start";
   end.textContent = activeCapture && videoContext ? "Set playhead end · Space" : "Set playhead end";
 }
@@ -828,8 +922,8 @@ function toggleInsertionPanZoomMode() {
     button.textContent = panZoomModeLabel(insertionPanZoomMode, "Insertion");
   }
   const tracks = document.querySelector<HTMLElement>(".source-tracks");
-  if (captureSlot !== null && tracks) {
-    if (insertionPanZoomMode === "dynamic") adaptTimelineZoomAtHead(tracks, pausedAt);
+  if ((captureSlot !== null || rangeSegmentId !== null) && tracks) {
+    if (insertionPanZoomMode === "dynamic") adaptTimelineZoomAtHead(tracks, pausedAt, "dynamic");
     else applyTimelineZoomInPlace(tracks, pausedAt);
   }
 }
@@ -892,7 +986,7 @@ function restartTimeline() {
 function seekArrangementFromTimelineClick(event: MouseEvent) {
   if (event.shiftKey || suppressNextTimelineSeek) return;
   const target = event.target as HTMLElement;
-  if (target.closest("button, .trim-handle, .arrangement-head") || !target.closest(".source-track, .segment, .moment-gap, .time-axis")) return;
+  if (target.closest("button, .arrangement-head") || !target.closest(".source-track, .segment, .moment-gap, .time-axis")) return;
   const tracks = event.currentTarget as HTMLElement;
   const position = Math.max(0, event.clientX - tracks.getBoundingClientRect().left + tracks.scrollLeft - timelineContentOrigin(tracks));
   if (playing) {
@@ -964,7 +1058,7 @@ function beginTimelinePan(event: PointerEvent) {
   if (event.button !== 0 || event.shiftKey || event.altKey || !project.segments.length) return;
   const target = event.target as HTMLElement;
   const startedOnOnlySegment = project.segments.length === 1 && Boolean(target.closest(".segment"));
-  if (target.closest("button, .track-label, .time-label, .trim-handle, .arrangement-head") || (!startedOnOnlySegment && target.closest(".segment"))) return;
+  if (target.closest("button, .track-label, .time-label, .arrangement-head") || (!startedOnOnlySegment && target.closest(".segment"))) return;
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
   tracks.focus({ preventScroll: true });
@@ -989,6 +1083,8 @@ function beginTimelinePan(event: PointerEvent) {
   lastTimelinePanSeekAt = -Infinity;
   let lastClientX = event.clientX;
   let lastClientY = event.clientY;
+  let virtualClientX = event.clientX;
+  let virtualClientY = event.clientY;
   let visualPanRoll = 0;
   let visualZoomRoll = 0;
   const headViewportX = timelineHeadViewportX(tracks);
@@ -1007,26 +1103,46 @@ function beginTimelinePan(event: PointerEvent) {
   let gestureIndicator: HTMLDivElement | null = null;
   const gestureSelectionRadius = 18;
   const gestureCrossoverRadius = 22;
+  // Safari always displays a native "mouse pointer is hidden" banner when
+  // Pointer Lock succeeds. Use captured dragging there so the mixer does not
+  // flash browser chrome on every gesture.
+  const isSafari = navigator.vendor.includes("Apple") && !navigator.userAgent.includes("CriOS") && !navigator.userAgent.includes("FxiOS");
+  const usePointerLock = !isSafari && panDuringPlayback && panZoomMode === "gesture" && typeof tracks.requestPointerLock === "function";
+  let pointerWasLocked = false;
+  let finished = false;
+  let neutralSnapTimer = 0;
   tracks.setPointerCapture(event.pointerId);
 
-  const move = (moveEvent: PointerEvent) => {
-    if (!dragging && Math.hypot(moveEvent.clientX - originX, moveEvent.clientY - originY) < 4) return;
+  const move = (moveEvent: MouseEvent) => {
+    const pointerLocked = document.pointerLockElement === tracks;
+    if (pointerLocked && moveEvent.type !== "mousemove") return;
+    if (pointerLocked) {
+      pointerWasLocked = true;
+      virtualClientX += moveEvent.movementX;
+      virtualClientY += moveEvent.movementY;
+    } else {
+      virtualClientX = moveEvent.clientX;
+      virtualClientY = moveEvent.clientY;
+    }
+    const clientX = virtualClientX;
+    const clientY = virtualClientY;
+    if (!dragging && Math.hypot(clientX - originX, clientY - originY) < 4) return;
     dragging = true;
-    const horizontalTravel = Math.abs(moveEvent.clientX - originX);
-    const verticalDistance = Math.abs(moveEvent.clientY - originY);
+    const horizontalTravel = Math.abs(clientX - originX);
+    const verticalDistance = Math.abs(clientY - originY);
     const originDistance = Math.hypot(horizontalTravel, verticalDistance);
     const zoomIntent = verticalDistance / Math.max(1, horizontalTravel + verticalDistance);
     let nextGestureMode = gestureMode;
-    let activeDialDeltaX = moveEvent.clientX - activeDialOriginX;
-    let activeDialDeltaY = moveEvent.clientY - activeDialOriginY;
+    let activeDialDeltaX = clientX - activeDialOriginX;
+    let activeDialDeltaY = clientY - activeDialOriginY;
     const activeAxisDistance = Math.abs(gestureMode === "pan" ? activeDialDeltaX : activeDialDeltaY);
     if (panZoomMode === "gesture" && controlEngaged && activeAxisDistance < 30) {
       // Treat re-entry as a fresh press: discard the previous axis and make
       // this pointer position the local origin for the next wall crossing.
-      activeDialOriginX = moveEvent.clientX;
-      activeDialOriginY = moveEvent.clientY;
-      perpendicularOriginX = moveEvent.clientX;
-      perpendicularOriginY = moveEvent.clientY;
+      activeDialOriginX = clientX;
+      activeDialOriginY = clientY;
+      perpendicularOriginX = clientX;
+      perpendicularOriginY = clientY;
       activeDialDeltaX = 0;
       activeDialDeltaY = 0;
       previousActiveControlTravel = 0;
@@ -1060,18 +1176,18 @@ function beginTimelinePan(event: PointerEvent) {
       // A re-armed gesture already has the correct origin at the dead-zone
       // centre. Preserve it so touching the wall engages immediately.
       if (gestureMode !== null) {
-        activeDialOriginX = moveEvent.clientX;
-        activeDialOriginY = moveEvent.clientY;
-        perpendicularOriginX = moveEvent.clientX;
-        perpendicularOriginY = moveEvent.clientY;
+        activeDialOriginX = clientX;
+        activeDialOriginY = clientY;
+        perpendicularOriginX = clientX;
+        perpendicularOriginY = clientY;
       }
       previousActiveControlTravel = 0;
       dotTracksPerpendicular = true;
       controlEngaged = false;
       dialContractionSuppressed = false;
     }
-    activeDialDeltaX = moveEvent.clientX - activeDialOriginX;
-    activeDialDeltaY = moveEvent.clientY - activeDialOriginY;
+    activeDialDeltaX = clientX - activeDialOriginX;
+    activeDialDeltaY = clientY - activeDialOriginY;
     const activeControlTravel = Math.abs(nextGestureMode === "zoom" ? activeDialDeltaY : activeDialDeltaX);
     const nextControlEngaged = panZoomMode !== "gesture" || Boolean(nextGestureMode && activeControlTravel >= 30);
     const panStartScrollLeft = Math.max(0, timelineContentOrigin(tracks) - headViewportX);
@@ -1094,10 +1210,10 @@ function beginTimelinePan(event: PointerEvent) {
       dialContractionSuppressed = activeControlAtLimit;
     }
     if (panZoomMode === "gesture" && controlEngaged && !nextControlEngaged) {
-      activeDialOriginX = moveEvent.clientX;
-      activeDialOriginY = moveEvent.clientY;
-      perpendicularOriginX = moveEvent.clientX;
-      perpendicularOriginY = moveEvent.clientY;
+      activeDialOriginX = clientX;
+      activeDialOriginY = clientY;
+      perpendicularOriginX = clientX;
+      perpendicularOriginY = clientY;
       activeDialDeltaX = 0;
       activeDialDeltaY = 0;
     }
@@ -1123,10 +1239,10 @@ function beginTimelinePan(event: PointerEvent) {
       const originIntensity = Math.max(0.12, Math.min(1, 1 - originDistance / 260));
       gestureIndicator.style.setProperty("--origin-intensity", originIntensity.toFixed(2));
       const activeDotX = Math.max(-30, Math.min(30, displayedGestureMode === "zoom"
-        ? moveEvent.clientX - perpendicularOriginX
+        ? clientX - perpendicularOriginX
         : activeDialDeltaX));
       const activeDotY = Math.max(-30, Math.min(30, displayedGestureMode === "pan"
-        ? moveEvent.clientY - perpendicularOriginY
+        ? clientY - perpendicularOriginY
         : activeDialDeltaY));
       if (activeControlTravel <= 10) dotTracksPerpendicular = true;
       else if (
@@ -1157,43 +1273,48 @@ function beginTimelinePan(event: PointerEvent) {
       } else if (nextGestureMode === "zoom") {
         gestureIndicator.style.setProperty("--zoom-roll", `${visualZoomRoll}px`);
       }
-      gestureIndicator.style.left = `${Math.max(8, Math.min(window.innerWidth - 104, moveEvent.clientX + 14))}px`;
-      gestureIndicator.style.top = `${Math.max(8, Math.min(window.innerHeight - 104, moveEvent.clientY - 48))}px`;
+      const indicatorX = pointerLocked ? originX : clientX;
+      const indicatorY = pointerLocked ? originY : clientY;
+      gestureIndicator.style.left = `${Math.max(8, Math.min(window.innerWidth - 104, indicatorX + 14))}px`;
+      gestureIndicator.style.top = `${Math.max(8, Math.min(window.innerHeight - 104, indicatorY - 48))}px`;
     }
     if (nextGestureMode !== gestureMode && nextGestureMode === "zoom") {
+      window.clearTimeout(neutralSnapTimer);
       zoomAnchorElapsed = panDuringPlayback
         ? currentElapsed()
         : elapsedAtCenteredHead(tracks, tracks.clientWidth / 2);
       gestureOriginZoom = timelineZoom;
-      gestureOriginY = moveEvent.clientY;
+      gestureOriginY = clientY;
       timelinePanActive = false;
       timelineHeadLocked = true;
       tracks.classList.remove("head-unlocked", "playback-pan");
       centerArrangementOnElapsed(zoomAnchorElapsed);
     } else if (nextGestureMode !== gestureMode && nextGestureMode === "pan" && panDuringPlayback) {
-      timelinePanActive = false;
-      timelineHeadLocked = true;
-      tracks.classList.remove("head-unlocked", "playback-pan");
-      centerArrangementOnElapsed(currentElapsed());
-    } else if (nextGestureMode !== gestureMode && nextGestureMode === null) {
-      timelinePanActive = false;
-      timelineHeadLocked = true;
-      tracks.classList.remove("head-unlocked", "playback-pan");
-      centerArrangementOnElapsed(panDuringPlayback ? currentElapsed() : pausedAt);
-    }
-    if (panZoomMode === "gesture" && nextControlEngaged !== controlEngaged) {
-      if (nextControlEngaged && nextGestureMode === "zoom") {
-        gestureOriginZoom = timelineZoom;
-        gestureOriginY = moveEvent.clientY;
-      } else if (panDuringPlayback && nextControlEngaged && nextGestureMode === "pan") {
-        timelinePanActive = true;
-        timelineHeadLocked = false;
-        tracks.classList.add("head-unlocked");
-      } else if (panDuringPlayback && !nextControlEngaged) {
+      window.clearTimeout(neutralSnapTimer);
+      // Keep the timeline detached from the playing head while the gesture
+      // passes through its neutral zone. It should only snap back once a zoom
+      // gesture is detected, not merely because pan is temporarily neutral.
+      timelinePanActive = true;
+      timelineHeadLocked = false;
+      tracks.classList.add("head-unlocked");
+    } else if (nextGestureMode !== gestureMode && nextGestureMode === null && gestureMode === "pan" && panDuringPlayback) {
+      window.clearTimeout(neutralSnapTimer);
+      neutralSnapTimer = window.setTimeout(() => {
+        if (finished || gestureMode !== null || !playing) return;
         timelinePanActive = false;
         timelineHeadLocked = true;
         tracks.classList.remove("head-unlocked", "playback-pan");
         centerArrangementOnElapsed(currentElapsed());
+      }, 450);
+    }
+    if (panZoomMode === "gesture" && nextControlEngaged !== controlEngaged) {
+      if (nextControlEngaged && nextGestureMode === "zoom") {
+        gestureOriginZoom = timelineZoom;
+        gestureOriginY = clientY;
+      } else if (panDuringPlayback && nextControlEngaged && nextGestureMode === "pan") {
+        timelinePanActive = true;
+        timelineHeadLocked = false;
+        tracks.classList.add("head-unlocked");
       }
     }
     controlEngaged = nextControlEngaged;
@@ -1201,8 +1322,8 @@ function beginTimelinePan(event: PointerEvent) {
     const panGestureActive = panZoomMode !== "gesture" || (gestureMode === "pan" && controlEngaged);
     tracks.classList.add("panning");
     tracks.classList.toggle("playback-pan", panDuringPlayback && panGestureActive);
-    const pointerDeltaX = moveEvent.clientX - lastClientX;
-    const pointerDeltaY = moveEvent.clientY - lastClientY;
+    const pointerDeltaX = clientX - lastClientX;
+    const pointerDeltaY = clientY - lastClientY;
     if (panGestureActive) {
       const previousScrollLeft = tracks.scrollLeft;
       tracks.scrollLeft = Math.max(
@@ -1213,13 +1334,13 @@ function beginTimelinePan(event: PointerEvent) {
       visualPanRoll += appliedPointerDelta * 0.8;
       gestureIndicator?.style.setProperty("--pan-roll", `${visualPanRoll}px`);
     }
-    lastClientX = moveEvent.clientX;
-    lastClientY = moveEvent.clientY;
+    lastClientX = clientX;
+    lastClientY = clientY;
     const ghostClientX = tracks.getBoundingClientRect().left + tracks.clientWidth / 2;
     const anchorElapsed = gestureMode === "zoom" ? zoomAnchorElapsed : elapsedAtTimelinePointer(tracks, ghostClientX);
     if (panZoomMode === "gesture" && gestureMode === "zoom" && controlEngaged) {
       const zoomRange = Math.max(1, gestureZoomBounds.max / Math.max(0.1, gestureZoomBounds.min));
-      const verticalTravel = (gestureOriginY - moveEvent.clientY) / 240;
+      const verticalTravel = (gestureOriginY - clientY) / 240;
       const gestureZoom = gestureOriginZoom * Math.exp(Math.log(zoomRange) * verticalTravel);
       const nextZoom = clampTimelineZoom(gestureZoom, tracks);
       if (nextZoom !== timelineZoom) {
@@ -1266,11 +1387,19 @@ function beginTimelinePan(event: PointerEvent) {
     }
   };
   const end = () => {
+    if (finished) return;
+    finished = true;
+    window.clearTimeout(neutralSnapTimer);
     tracks.removeEventListener("pointermove", move);
     tracks.removeEventListener("pointerup", end);
     tracks.removeEventListener("pointercancel", end);
     tracks.classList.remove("panning", "playback-pan");
     gestureIndicator?.remove();
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", end);
+    document.removeEventListener("pointerlockchange", onPointerLockChange);
+    document.removeEventListener("pointerlockerror", onPointerLockError);
+    if (document.pointerLockElement === tracks) document.exitPointerLock();
     timelinePanActive = false;
     timelineHeadLocked = previousHeadLocked;
     tracks.classList.toggle("head-unlocked", !timelineHeadLocked);
@@ -1295,9 +1424,34 @@ function beginTimelinePan(event: PointerEvent) {
       cueArrangementAtPausedPosition(false);
     }
   };
+  const onPointerLockChange = () => {
+    if (document.pointerLockElement === tracks) {
+      pointerWasLocked = true;
+      document.removeEventListener("pointerlockerror", onPointerLockError);
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", end, { once: true });
+      return;
+    }
+    if (pointerWasLocked) end();
+  };
+  const onPointerLockError = () => {
+    document.removeEventListener("pointerlockchange", onPointerLockChange);
+    document.removeEventListener("pointerlockerror", onPointerLockError);
+  };
   tracks.addEventListener("pointermove", move);
   tracks.addEventListener("pointerup", end);
   tracks.addEventListener("pointercancel", end);
+  if (usePointerLock) {
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("pointerlockerror", onPointerLockError, { once: true });
+    try {
+      // Safari uses the event-based Pointer Lock API and may return void here.
+      // Success and failure are therefore handled by the document events above.
+      tracks.requestPointerLock();
+    } catch {
+      onPointerLockError();
+    }
+  }
 }
 
 function elapsedAtTimelinePointer(tracks: HTMLElement, clientX: number) {
@@ -1326,7 +1480,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
   const source = segment && sourceForSegment(segment);
   if (!segment || !source || !youtubePlayer || !playerReady) return;
   const offset = Math.max(0, pausedAt - segmentStart(activePlaybackIndex));
-  const options = { videoId: source.videoId, startSeconds: segment.sourceStartSeconds + offset, endSeconds: playbackEndSeconds(activePlaybackIndex) };
+  const options = { videoId: source.videoId, startSeconds: segment.sourceStartSeconds + offset * segmentPlaybackRate(segment), endSeconds: playbackEndSeconds(activePlaybackIndex) };
   bufferedArrangementSegmentId = segment.id;
   if (resumePlayback) {
     arrangementPlaybackTransitioning = true;
@@ -1335,6 +1489,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
     pauseWhenFrameAvailable = false;
     loadedVideoId = source.videoId;
     youtubePlayer.loadVideoById(options);
+    applyPlaybackRate(segment);
     updatePlaybackButtons();
     tick();
   } else {
@@ -1343,6 +1498,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
       loadedVideoId = source.videoId;
       loadedVideoHasFrame = false;
       youtubePlayer.cueVideoById(options);
+      applyPlaybackRate(segment);
     } else if (loadedVideoId === source.videoId && loadedVideoHasFrame) {
       youtubePlayer.seekTo(options.startSeconds, true);
       youtubePlayer.pauseVideo();
@@ -1364,7 +1520,7 @@ function seekTimelinePreviewThrottled(elapsed: number) {
   const source = segment && sourceForSegment(segment);
   if (!segment || !source) return;
   lastTimelinePanSeekAt = now;
-  const sourceTimestamp = segment.sourceStartSeconds + Math.max(0, elapsed - segmentStart(index));
+  const sourceTimestamp = segment.sourceStartSeconds + Math.max(0, elapsed - segmentStart(index)) * segmentPlaybackRate(segment);
   const options = { videoId: source.videoId, startSeconds: sourceTimestamp, endSeconds: playbackEndSeconds(index) };
   bufferedArrangementSegmentId = segment.id;
   if (!frameBufferingEnabled) {
@@ -1372,13 +1528,15 @@ function seekTimelinePreviewThrottled(elapsed: number) {
     loadedVideoId = source.videoId;
     loadedVideoHasFrame = false;
     youtubePlayer.cueVideoById(options);
+    applyPlaybackRate(segment);
   } else if (loadedVideoId !== source.videoId || !loadedVideoHasFrame) {
     loadedVideoId = source.videoId;
     loadedVideoHasFrame = false;
     pauseWhenFrameAvailable = true;
     youtubePlayer.loadVideoById(options);
+    applyPlaybackRate(segment);
   } else {
-    youtubePlayer.seekTo(sourceTimestamp, true);
+    youtubePlayer.seekTo(sourceTimestamp, false);
     youtubePlayer.pauseVideo();
   }
   setPlaybackStatus(`Preview positioned at ${formatTime(elapsed)}`);
@@ -1386,7 +1544,6 @@ function seekTimelinePreviewThrottled(elapsed: number) {
 
 function bindTimelineEvents(root: ParentNode) {
   root.querySelectorAll<HTMLElement>("[data-action]").forEach((button) => button.addEventListener("click", () => editSegment(button.dataset.action!, button.dataset.id!)));
-  root.querySelectorAll<HTMLButtonElement>("[data-trim]").forEach((handle) => handle.addEventListener("pointerdown", beginTrim));
   root.querySelectorAll<HTMLElement>(".segment[data-segment]").forEach((item) => {
     item.addEventListener("pointerdown", beginSegmentReorder);
     item.addEventListener("click", selectMoment);
@@ -1422,7 +1579,7 @@ function beginMarqueeSelection(event: PointerEvent) {
   if (event.button !== 0 || !event.shiftKey) return;
   const target = event.target as HTMLElement;
   const startedOnSegment = Boolean(target.closest(".segment"));
-  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .track-label, .time-label, .time-axis, .trim-handle, .arrangement-head") || !target.closest(".source-tracks")) return;
+  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .track-label, .time-label, .time-axis, .arrangement-head") || !target.closest(".source-tracks")) return;
 
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
@@ -1590,6 +1747,14 @@ function assignSource(event: SubmitEvent) {
   const existing = sourceForSlot(editingSlot);
   const source: Source = { id: existing?.id ?? crypto.randomUUID(), slot: editingSlot, videoId, originalUrl: url.trim(), title: String(form.get("title") ?? "").trim() || `YouTube video ${videoId}` };
   project.sources = [...project.sources.filter((item) => item.slot !== editingSlot), source];
+  // Editing replaces the media behind a source rather than replacing the
+  // timeline source itself. Keep every moment attached so its existing
+  // timestamps are applied to the new video wherever that video permits.
+  if (existing) {
+    project.segments = project.segments.map((segment) => segment.sourceId === existing.id
+      ? { ...segment, sourceId: source.id }
+      : segment);
+  }
   saveProject();
   selectedSlot = editingSlot;
   editingSlot = null;
@@ -1601,6 +1766,7 @@ function updateTimeValues() {
   const startInput = document.querySelector<HTMLInputElement>("#start-time");
   const endInput = document.querySelector<HTMLInputElement>("#end-time");
   if (!startInput || !endInput) {
+    updateRangeSegmentFromEditor(true);
     updateSegmentDefinitionRuler();
     return;
   }
@@ -1617,6 +1783,7 @@ function updateTimeValues() {
   }
   const readout = document.querySelector<HTMLElement>(".duration-readout b");
   if (readout) readout.textContent = formatTime(endValue - startValue);
+  updateRangeSegmentFromEditor(true);
   updateSegmentDefinitionRuler();
 }
 
@@ -1667,6 +1834,16 @@ function editSegment(action: string, id: string) {
     const copy = { ...project.segments[index], id: crypto.randomUUID() };
     project.segments.splice(index + 1, 0, copy);
     lastAddedMomentId = copy.id;
+  }
+  if (action === "speed") {
+    const segment = project.segments[index];
+    const rates = availablePlaybackRatesForSegment(segment);
+    const current = segmentPlaybackRate(segment);
+    const next = rates.find((rate) => rate > current + 0.001) ?? 1;
+    if (next === 1) delete segment.playbackRate;
+    else segment.playbackRate = next;
+    pausedAt = Math.min(pausedAt, totalDuration(project.segments));
+    if (index === activePlaybackIndex) applyPlaybackRate(segment);
   }
   cleanupMomentGroups();
   saveProject();
@@ -1812,50 +1989,6 @@ function beginSegmentReorder(event: PointerEvent) {
   card.addEventListener("pointercancel", cancel);
 }
 
-function beginTrim(event: PointerEvent) {
-  event.preventDefault();
-  event.stopPropagation();
-  const handle = event.currentTarget as HTMLButtonElement;
-  const segment = project.segments.find((item) => item.id === handle.dataset.id);
-  const edge = handle.dataset.trim as "start" | "end";
-  if (!segment) return;
-  const originX = event.clientX;
-  const originalStart = segment.sourceStartSeconds;
-  const originalEnd = segment.sourceEndSeconds;
-  const trimPixelsPerSecond = Math.max(0.1, timelineZoom);
-  const card = handle.closest<HTMLElement>(".segment");
-  card?.classList.add("trimming");
-  handle.setPointerCapture(event.pointerId);
-  const move = (moveEvent: PointerEvent) => {
-    const deltaSeconds = (moveEvent.clientX - originX) / trimPixelsPerSecond;
-    if (edge === "start") segment.sourceStartSeconds = Number(Math.max(0, Math.min(originalEnd - 0.1, originalStart + deltaSeconds)).toFixed(2));
-    else segment.sourceEndSeconds = Number(Math.max(originalStart + 0.1, originalEnd + deltaSeconds).toFixed(2));
-    updateSegmentBar(card, segment);
-    updateTrimPreview(card, edge, moveEvent.clientX - originX);
-  };
-  const end = () => {
-    handle.removeEventListener("pointermove", move);
-    handle.removeEventListener("pointerup", end);
-    handle.removeEventListener("pointercancel", end);
-    card?.classList.remove("trimming");
-    saveProject();
-    render();
-  };
-  handle.addEventListener("pointermove", move);
-  handle.addEventListener("pointerup", end);
-  handle.addEventListener("pointercancel", end);
-}
-
-function updateTrimPreview(card: HTMLElement | null, edge: "start" | "end", pointerDelta: number) {
-  if (!card) return;
-  const cropTrack = card.querySelector<HTMLElement>(".duration-bar>span");
-  const maximumCrop = cropTrack?.clientWidth ?? card.clientWidth;
-  const cropDistance = edge === "start" ? pointerDelta : -pointerDelta;
-  const cropPixels = Math.min(maximumCrop, Math.max(0, cropDistance));
-  card.style.setProperty("--trim-start-crop", edge === "start" ? `${cropPixels}px` : "0px");
-  card.style.setProperty("--trim-end-crop", edge === "end" ? `${cropPixels}px` : "0px");
-}
-
 function updateSegmentBar(card: HTMLElement | null, segment: Segment) {
   if (!card) return;
   const duration = segmentDuration(segment);
@@ -1869,6 +2002,32 @@ function updateSegmentBar(card: HTMLElement | null, segment: Segment) {
   if (label) label.textContent = `${duration.toFixed(1)}s`;
 }
 
+function segmentPlaybackRate(segment: Segment) {
+  return segment.playbackRate ?? 1;
+}
+
+function availablePlaybackRatesForSegment(segment: Segment) {
+  const source = sourceForSegment(segment);
+  const activeSource = project.segments[activePlaybackIndex] && sourceForSegment(project.segments[activePlaybackIndex]);
+  const reported = source && activeSource?.videoId === source.videoId && playerReady
+    ? youtubePlayer?.getAvailablePlaybackRates() ?? []
+    : [];
+  const rates = reported.length ? reported : [1, 1.25, 1.5, 2];
+  return [...new Set(rates.filter((rate) => rate >= 1 && rate <= 2))].sort((a, b) => a - b);
+}
+
+function applyPlaybackRate(segment: Segment) {
+  if (!youtubePlayer || !playerReady) return;
+  const requested = segmentPlaybackRate(segment);
+  const available = youtubePlayer.getAvailablePlaybackRates();
+  youtubePlayer.setPlaybackRate(available.includes(requested) ? requested : 1);
+}
+
+function applyActivePlaybackRate() {
+  const segment = project.segments[activePlaybackIndex];
+  if (segment) applyPlaybackRate(segment);
+}
+
 function segmentStart(index: number) {
   return project.segments.slice(0, index).reduce((sum, segment) => sum + segmentDuration(segment), 0);
 }
@@ -1880,6 +2039,7 @@ function segmentsPlayContinuously(previousIndex: number, nextIndex: number) {
     previous
     && next
     && segmentsUseSameVideo(previousIndex, nextIndex)
+    && segmentPlaybackRate(previous) === segmentPlaybackRate(next)
     && Math.abs(previous.sourceEndSeconds - next.sourceStartSeconds) <= CONTIGUOUS_SOURCE_EPSILON_SECONDS
   );
 }
@@ -1963,7 +2123,7 @@ async function mountPlayerForCurrentView() {
       // YouTube cookies are available, allowing YouTube to apply Premium benefits.
       // Login and membership state remain private inside the cross-origin iframe.
       host: "https://www.youtube.com",
-      playerVars: { playsinline: 1, rel: 0, controls: 0, disablekb: 1, origin: window.location.origin },
+      playerVars: { playsinline: 1, rel: 0, controls: 1, disablekb: 1, origin: window.location.origin },
       events: {
         onReady: () => {
           if (generation !== playerGeneration) return;
@@ -1988,6 +2148,7 @@ async function mountPlayerForCurrentView() {
           updateSegmentDefinitionRuler();
           if (event.data === 3) setPlaybackStatus("Buffering…");
           if (event.data === 1) {
+            if (playing) applyActivePlaybackRate();
             loadedVideoHasFrame = true;
             if (pauseWhenFrameAvailable) {
               pauseWhenFrameAvailable = false;
@@ -1999,6 +2160,7 @@ async function mountPlayerForCurrentView() {
             }
             arrangementPlaybackTransitioning = false;
             sourceVideoPlaying = true;
+            if (mode === "mix") animateSegmentDefinition();
             if (previewStopAtEnd !== null) monitorPreviewEnd();
             setPlaybackStatus(captureSlot === null ? "Playing with sound" : `Recording source ${captureSlot}`);
           }
@@ -2090,6 +2252,7 @@ function setBoundFromPlayer(bound: "start" | "end") {
   if (endInput) endInput.value = endValue.toFixed(1);
   const readout = document.querySelector<HTMLElement>(".duration-readout b");
   if (readout) readout.textContent = formatTime(Math.max(0, endValue - startValue));
+  updateRangeSegmentFromEditor(true);
   updateSegmentDefinitionRuler();
 }
 
@@ -2343,8 +2506,8 @@ function segmentBoundaryZoom(index: number, neighbourIndex: number, tracks: HTML
   return Math.max(0.1, Math.min(pairLimit, geometricMidpoint));
 }
 
-function adaptTimelineZoomAtHead(tracks: HTMLElement, elapsed: number) {
-  if (activePanZoomMode() !== "dynamic") return;
+function adaptTimelineZoomAtHead(tracks: HTMLElement, elapsed: number, zoomMode = activePanZoomMode(), forceLayout = false) {
+  if (zoomMode !== "dynamic") return;
   const index = findSegmentIndex(elapsed);
   const segment = project.segments[index];
   if (!segment) return;
@@ -2361,7 +2524,10 @@ function adaptTimelineZoomAtHead(tracks: HTMLElement, elapsed: number) {
     Math.log(Math.max(0.1, fromZoom))
     + (Math.log(Math.max(0.1, toZoom)) - Math.log(Math.max(0.1, fromZoom))) * curvedProgress
   ).toFixed(1));
-  if (nextZoom === timelineZoom) return;
+  if (nextZoom === timelineZoom) {
+    if (forceLayout) applyTimelineZoomInPlace(tracks, elapsed);
+    return;
+  }
   timelineZoom = nextZoom;
   applyTimelineZoomInPlace(tracks, elapsed);
 }
@@ -2461,18 +2627,19 @@ function beginLiveCapture(slot: number) {
 function animateSegmentDefinition() {
   cancelAnimationFrame(segmentDefinitionFrame);
   const update = () => {
-    if (captureSlot === null || !youtubePlayer) return;
+    if (!youtubePlayer || !sourceVideoPlaying || mode !== "mix") return;
     const current = youtubePlayer.getCurrentTime();
     activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer.getDuration() || 0, current);
-    endValue = Math.max(captureSourceStart, current);
-    const captured = project.segments.find((segment) => segment.id === captureSegmentId);
+    const rangeStart = captureSlot === null ? startValue : captureSourceStart;
+    endValue = Math.max(rangeStart, current);
+    const captured = captureSlot === null ? undefined : project.segments.find((segment) => segment.id === captureSegmentId);
     if (captured) captured.sourceEndSeconds = Math.max(captureSourceStart + 0.1, current);
     const endInput = document.querySelector<HTMLInputElement>("#end-time");
     if (endInput) endInput.value = endValue.toFixed(1);
     const readout = document.querySelector<HTMLElement>(".duration-readout b");
-    if (readout) readout.textContent = formatTime(endValue - captureSourceStart);
+    if (readout) readout.textContent = formatTime(endValue - rangeStart);
     updateSegmentDefinitionRuler();
-    updateCaptureTimeline();
+    if (captureSlot !== null) updateCaptureTimeline();
     segmentDefinitionFrame = requestAnimationFrame(update);
   };
   segmentDefinitionFrame = requestAnimationFrame(update);
@@ -2573,7 +2740,7 @@ function playActiveSegment() {
   const source = segment && sourceForSegment(segment);
   if (!segment || !source || !youtubePlayer || !playerReady) return;
   const offset = Math.max(0, pausedAt - segmentStart(activePlaybackIndex));
-  const sourceTimestamp = segment.sourceStartSeconds + offset;
+  const sourceTimestamp = segment.sourceStartSeconds + offset * segmentPlaybackRate(segment);
   previewStopAtEnd = null;
   cancelAnimationFrame(previewEndFrame);
   pauseWhenFrameAvailable = false;
@@ -2585,6 +2752,7 @@ function playActiveSegment() {
     && bufferedArrangementSegmentId === segment.id
     && Math.abs(youtubePlayer.getCurrentTime() - sourceTimestamp) <= BUFFERED_FRAME_MATCH_TOLERANCE_SECONDS
   ) {
+    applyPlaybackRate(segment);
     youtubePlayer.playVideo();
     return;
   }
@@ -2595,6 +2763,7 @@ function playActiveSegment() {
     startSeconds: sourceTimestamp,
     endSeconds: playbackEndSeconds(activePlaybackIndex),
   });
+  applyPlaybackRate(segment);
 }
 
 function updateActiveMomentUi(segment: Segment) {
@@ -2610,6 +2779,8 @@ function updateActiveMomentUi(segment: Segment) {
 }
 
 function updateActiveTimelineMoment() {
+  reorderTracksByDistanceToHead(currentElapsed());
+  syncRangeEditorToHighlightedSegment();
   document.querySelectorAll<HTMLElement>(".segment[data-index]").forEach((card) => {
     const isActive = Number(card.dataset.index) === activePlaybackIndex;
     card.classList.toggle("under-head", isActive);
@@ -2725,6 +2896,7 @@ function tick() {
     }
     if (segmentsUseSameVideo(previousIndex, nextIndex)) {
       youtubePlayer?.seekTo(project.segments[nextIndex].sourceStartSeconds, true);
+      applyActivePlaybackRate();
       youtubePlayer?.playVideo();
       updateActiveMomentUi(project.segments[nextIndex]);
       animationFrame = requestAnimationFrame(tick);
@@ -2772,7 +2944,7 @@ document.addEventListener("keydown", (event) => {
     }
   }
   if (isTypingTarget(event.target)) return;
-  const timelineFocused = event.target instanceof HTMLElement && Boolean(event.target.closest(".timeline-section"));
+  const timelineFocused = mode === "mix" && mixFocusContext === "timeline";
   if (mode === "mix" && (event.key === "+" || event.key === "=" || event.key === "-" || event.key === "_")) {
     event.preventDefault();
     changeTimelineZoom(event.key === "+" || event.key === "=" ? 4 : -4);

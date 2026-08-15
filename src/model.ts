@@ -14,6 +14,7 @@ export type Segment = {
   sourceStartSeconds: number;
   sourceEndSeconds: number;
   lane: 0 | 1;
+  playbackRate?: number;
   groupId?: string;
 };
 
@@ -63,6 +64,7 @@ export function parseMixProject(value: unknown): ProjectParseResult {
       || !sourceIds.has(item.sourceId) || !isFiniteNumber(item.sourceStartSeconds) || item.sourceStartSeconds < 0
       || !isFiniteNumber(item.sourceEndSeconds) || item.sourceEndSeconds <= item.sourceStartSeconds
       || (item.lane !== 0 && item.lane !== 1)
+      || (item.playbackRate !== undefined && (!isFiniteNumber(item.playbackRate) || item.playbackRate < 0.25 || item.playbackRate > 2))
       || (item.groupId !== undefined && (typeof item.groupId !== "string" || !item.groupId))) {
       return invalid("The project contains an invalid timeline segment.");
     }
@@ -74,6 +76,7 @@ export function parseMixProject(value: unknown): ProjectParseResult {
       sourceStartSeconds: item.sourceStartSeconds,
       sourceEndSeconds: item.sourceEndSeconds,
       lane: item.lane,
+      ...(item.playbackRate && item.playbackRate !== 1 ? { playbackRate: item.playbackRate } : {}),
       ...(item.groupId ? { groupId: item.groupId } : {}),
     });
   }
@@ -121,7 +124,7 @@ function validId(value: string | null | undefined): string | null {
 }
 
 export function segmentDuration(segment: Segment): number {
-  return segment.sourceEndSeconds - segment.sourceStartSeconds;
+  return (segment.sourceEndSeconds - segment.sourceStartSeconds) / (segment.playbackRate ?? 1);
 }
 
 export function totalDuration(segments: Segment[]): number {
