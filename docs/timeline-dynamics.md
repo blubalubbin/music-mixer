@@ -60,13 +60,12 @@ flowchart LR
 
 The timeline updates in place while panning. Segment columns, time labels, group outlines, zoom controls, and the Head position all receive the same new scale. Re-rendering the entire workspace during a drag would interrupt the pointer interaction, so the live scale change is intentionally surgical.
 
-Dynamic pan zoom is enabled by default. The arrangement toolbar cycles through three locally stored modes:
+Dynamic pan zoom is enabled by default. The arrangement toolbar toggles between two locally stored modes:
 
 - **Dynamic pan:** apply the adaptive sine scale at the Head.
-- **Manual:** freeze the selected scale while panning.
-- **Pan + vertical:** drag horizontally to move through time and vertically to adjust zoom geometrically between the whole timeline's minimum and maximum scales.
+- **Fixed Zoom:** preserve the selected scale while panning horizontally, or drag vertically to adjust zoom geometrically between the whole timeline's minimum and maximum scales. The fixed zoom-out limit allows twice the fit-to-screen seconds per pixel, so the complete arrangement can contract to roughly half of the usable track width.
 
-Pressing either minus or plus always switches to **Manual** before applying the requested zoom. Switching dynamic zoom back on immediately applies the adaptive scale at the Head.
+Pressing either minus or plus always switches to **Fixed Zoom** before applying the requested zoom. Switching dynamic zoom back on immediately applies the adaptive scale at the Head.
 
 When frame buffering is disabled, timeline preview positioning always uses YouTube's non-priming cue path, even if that video has already rendered or played. Previously rendered state does not override the setting.
 
