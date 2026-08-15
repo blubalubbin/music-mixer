@@ -43,6 +43,7 @@ let arrangementScrollLeft = 0;
 const selectedMomentIds = new Set<string>();
 let suppressNextMomentClick = false;
 let suppressNextTimelineSeek = false;
+let lastAddedMomentId: string | null = null;
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -329,7 +330,7 @@ function segmentCard(segment: Segment, index: number) {
   const source = sourceForSegment(segment);
   const slot = source?.slot ?? 1;
   const duration = segmentDuration(segment);
-  return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" data-index="${index}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
+  return `<article class="segment ${selectedMomentIds.has(segment.id) ? "selected" : ""} ${segment.groupId ? "grouped" : ""} ${lastAddedMomentId === segment.id ? "last-added" : ""} ${playing && index === activePlaybackIndex ? "currently-playing" : ""}" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" data-segment="${segment.id}" data-index="${index}" ${segment.groupId ? `data-group="${segment.groupId}"` : ""}>
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
     ${segment.groupId ? `<span class="group-badge" title="Grouped moment">G</span>` : ""}
     <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}</small></span>
@@ -337,7 +338,7 @@ function segmentCard(segment: Segment, index: number) {
     <button data-action="delete" data-id="${segment.id}" aria-label="Delete segment">×</button>
     <div class="duration-bar" aria-label="${duration.toFixed(1)} second moment">
       <button class="trim-handle trim-start" data-trim="start" data-id="${segment.id}" aria-label="Drag to change segment start"></button>
-      <span><i></i><em>${duration.toFixed(1)}s</em></span>
+      <span><i></i><em>${duration.toFixed(1)}s</em>${lastAddedMomentId === segment.id ? `<small class="head-insert-note">Added at timeline head</small>` : ""}</span>
       <button class="trim-handle trim-end" data-trim="end" data-id="${segment.id}" aria-label="Drag to change segment end"></button>
     </div>
   </article>`;
@@ -520,7 +521,7 @@ function beginMarqueeSelection(event: PointerEvent) {
   if (event.button !== 0) return;
   const target = event.target as HTMLElement;
   const startedOnSegment = Boolean(target.closest(".segment"));
-  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .track-label, .time-label, .trim-handle, .arrangement-head") || !target.closest(".source-tracks")) return;
+  if ((!event.shiftKey && startedOnSegment) || target.closest("button, .track-label, .time-label, .time-axis, .trim-handle, .arrangement-head") || !target.closest(".source-tracks")) return;
 
   event.preventDefault();
   const tracks = event.currentTarget as HTMLElement;
@@ -686,7 +687,9 @@ function addSegment() {
   }
   const insertionIndex = insertionIndexAtHead();
   const insertedDuration = endValue - startValue;
-  project.segments.splice(insertionIndex, 0, { id: crypto.randomUUID(), sourceId: source.id, sourceStartSeconds: startValue, sourceEndSeconds: endValue, lane: 0 });
+  const insertedId = crypto.randomUUID();
+  project.segments.splice(insertionIndex, 0, { id: insertedId, sourceId: source.id, sourceStartSeconds: startValue, sourceEndSeconds: endValue, lane: 0 });
+  lastAddedMomentId = insertedId;
   pausedAt = segmentStart(insertionIndex) + insertedDuration;
   activePlaybackIndex = findSegmentIndex(pausedAt);
   saveProject();
@@ -1004,13 +1007,15 @@ function finishLiveCapture(sourceEnd = youtubePlayer?.getCurrentTime()) {
   if (source && Number.isFinite(end) && end > captureSourceStart) {
     const insertionIndex = insertionIndexAtHead();
     const insertedDuration = Number(end.toFixed(1)) - captureSourceStart;
+    const insertedId = crypto.randomUUID();
     project.segments.splice(insertionIndex, 0, {
-      id: crypto.randomUUID(),
+      id: insertedId,
       sourceId: source.id,
       sourceStartSeconds: captureSourceStart,
       sourceEndSeconds: Number(end.toFixed(1)),
       lane: 0,
     });
+    lastAddedMomentId = insertedId;
     pausedAt = segmentStart(insertionIndex) + insertedDuration;
     activePlaybackIndex = findSegmentIndex(pausedAt);
     saveProject();
@@ -1219,6 +1224,12 @@ function updateActiveMomentUi(segment: Segment) {
   if (times) times.textContent = `${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}`;
 }
 
+function updateActiveTimelineMoment() {
+  document.querySelectorAll<HTMLElement>(".segment[data-index]").forEach((card) => {
+    card.classList.toggle("currently-playing", playing && Number(card.dataset.index) === activePlaybackIndex);
+  });
+}
+
 function updatePlayUi(elapsed: number) {
   const total = totalDuration(project.segments);
   const values = document.querySelectorAll<HTMLElement>(".transport > span");
@@ -1258,6 +1269,7 @@ function togglePlayback() {
   if (playing) {
     pausedAt = currentElapsed();
     playing = false;
+    updateActiveTimelineMoment();
     cancelAnimationFrame(animationFrame);
     youtubePlayer?.pauseVideo();
     updatePlaybackButtons();
@@ -1271,6 +1283,7 @@ function togglePlayback() {
   playStartedAt = performance.now();
   if (playerReady) playActiveSegment();
   updatePlaybackButtons();
+  updateActiveTimelineMoment();
   updatePerformanceLabel("Playing", true);
   tick();
 }
@@ -1288,6 +1301,7 @@ function tick() {
   const elapsed = currentElapsed();
   if (elapsed >= totalDuration(project.segments)) {
     playing = false;
+    updateActiveTimelineMoment();
     pausedAt = totalDuration(project.segments);
     youtubePlayer?.stopVideo();
     updatePlayUi(pausedAt);
@@ -1301,6 +1315,7 @@ function tick() {
     const previousSource = sourceForSegment(project.segments[activePlaybackIndex]);
     const nextSource = sourceForSegment(project.segments[nextIndex]);
     activePlaybackIndex = nextIndex;
+    updateActiveTimelineMoment();
     pausedAt = segmentStart(nextIndex);
     playStartedAt = performance.now();
     if (previousSource?.videoId === nextSource?.videoId) {
@@ -1332,6 +1347,7 @@ function stopPlayback() {
   activePlaybackIndex = -1;
   youtubePlayer?.stopVideo();
   cancelAnimationFrame(animationFrame);
+  updateActiveTimelineMoment();
 }
 
 function isTypingTarget(target: EventTarget | null) {

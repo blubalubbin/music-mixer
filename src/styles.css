@@ -126,6 +126,9 @@ main{min-height:0;overflow:hidden}
 .drop-column{box-shadow:inset 3px 0 0 #fff!important}
 .drop-column.drop-after{box-shadow:inset -3px 0 0 #fff!important}
 .segment.selected{outline:2px solid #fff;outline-offset:-2px;background:#292a28}
+.segment.last-added{background:color-mix(in srgb,#58c77a 18%,#1c1d1c);outline:2px solid #58c77a;outline-offset:-2px;box-shadow:inset 0 0 16px #58c77a1f,0 0 9px #58c77a55}
+.segment.currently-playing{z-index:5;background:color-mix(in srgb,#ff9d45 24%,#1c1d1c);outline:3px solid #ff9d45;outline-offset:-3px;box-shadow:inset 0 0 18px #ff9d4533,0 0 12px #ff9d4577}
+.segment.currently-playing .segment-index::after{content:" · PLAYING";color:#ffb66f}
 .selection-marquee{position:fixed;z-index:1000;pointer-events:none;border:1px solid #fff;background:rgba(255,255,255,.12);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
 .group-region{position:absolute;z-index:6;pointer-events:none;top:34px;height:calc(var(--track-count) * var(--track-row-height) + (var(--track-count) - 1) * 5px);left:calc(10px + var(--track-label-width) + var(--group-left));width:var(--group-width);border:2px solid var(--group-color);box-shadow:inset 0 0 0 1px #0008,0 0 8px #0008}
 .segment.grouped{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--slot-color) 65%,#fff)}
@@ -139,6 +142,7 @@ main{min-height:0;overflow:hidden}
 .duration-bar>span{position:relative;height:6px;background:color-mix(in srgb,var(--slot-color) 45%,#242522);overflow:visible}
 .duration-bar i{position:absolute;inset:0;background:var(--slot-color);opacity:.75}
 .duration-bar em{position:absolute;right:4px;top:-13px;color:#aaa;font:normal 7px DM Mono}
+.head-insert-note{position:absolute;left:4px;top:-13px;color:#58c77a;font:500 7px DM Mono;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
 .segment .trim-handle{position:relative;z-index:2;width:10px;height:14px;border:0;border-radius:0;background:#eee;cursor:ew-resize;touch-action:none}
 .segment .trim-start{grid-column:1!important}.segment .trim-end{grid-column:3!important}.duration-bar>span{grid-column:2}
 .segment .trim-handle:hover,.segment .trim-handle:active{background:var(--slot-color)}
