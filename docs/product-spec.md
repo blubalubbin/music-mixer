@@ -56,7 +56,7 @@ Segments inherit the source number and color. The product vision supports:
 
 - drag-to-reorder;
 - trim start and end;
-- two or more parallel lanes;
+- one dedicated track for each loaded video source;
 - horizontal overlap;
 - snapping that can be disabled for fine timing; and
 - a playhead for previewing the arrangement.
@@ -76,8 +76,8 @@ The first release should avoid assigning two unrelated meanings to a number key 
 | Context | `1`–`9` action |
 | --- | --- |
 | Browse grid | Open that source slot |
-| Mix, nothing recording | Select and preview that source |
-| Mix, capture armed | Mark a segment boundary or trigger the armed source |
+| Mix, nothing recording | Trigger that source from the chosen start and begin recording |
+| Mix, recording | Close the current moment and trigger the selected source |
 | Play | Optional live trigger, disabled by default |
 
 `0` is reserved for a global action such as stop, rather than representing a tenth source in a nine-tile layout.
@@ -88,7 +88,7 @@ The first release should avoid assigning two unrelated meanings to a number key 
 - Add a source by pasted YouTube URL.
 - Create a segment with start and end timestamps.
 - Arrange segments in order.
-- Display a two-lane timeline while playing YouTube segments sequentially.
+- Display dedicated source tracks while playing YouTube segments sequentially.
 - Save the project locally in the browser.
 - Preview a segment.
 - Play the arrangement with clear buffering and error states.

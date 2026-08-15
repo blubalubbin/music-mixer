@@ -31,6 +31,10 @@ let playerGeneration = 0;
 let playerReady = false;
 let youtubePlayer: YouTubePlayer | null = null;
 let youtubeApiPromise: Promise<void> | null = null;
+let captureSlot: number | null = null;
+let captureStartedAt = 0;
+let captureSourceStart = 0;
+let pendingCaptureSlot: number | null = null;
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -38,6 +42,7 @@ type YouTubePlayer = {
   playVideo(): void;
   pauseVideo(): void;
   stopVideo(): void;
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   destroy(): void;
 };
@@ -177,7 +182,6 @@ function mixView() {
   const source = sourceForSlot(selectedSlot);
   return `
     <section class="workspace mix-workspace">
-      <div class="mix-header"><div><p class="eyebrow">SHAPE THE MOMENTS</p><h1>Build your sequence.</h1></div><p>Select a source, mark its start and end, then add the moment to your mix.</p></div>
       <div class="source-strip">${Array.from({ length: 9 }, (_, index) => sourceTile(index + 1, true)).join("")}</div>
       <div class="editor-layout">
         <section class="mock-player" style="--slot-color:${SLOT_COLORS[selectedSlot - 1]}">
@@ -196,7 +200,7 @@ function mixView() {
           <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
           <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
           <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
-          <p class="shortcut">Shortcuts: <kbd>[</kbd> start · <kbd>]</kbd> end · <kbd>Enter</kbd> add</p>
+          <p class="shortcut">Shortcuts: <kbd>1</kbd>–<kbd>9</kbd> trigger/record · <kbd>Space</kbd> finish · <kbd>Enter</kbd> add</p>
         </section>
       </div>
       ${timelineView()}
@@ -205,11 +209,12 @@ function mixView() {
 
 function timelineView() {
   const duration = totalDuration(project.segments);
+  const sources = [...project.sources].sort((a, b) => a.slot - b.slot);
   return `
     <section class="timeline-section">
       <div class="timeline-heading"><div><p class="eyebrow">ARRANGEMENT</p><h2>${project.segments.length ? `${project.segments.length} moments · ${formatTime(duration)}` : "Your mix is empty"}</h2></div>${project.segments.length ? `<button class="primary" data-mode="play">Play mix <span>▶</span></button>` : ""}</div>
-      <div class="timeline ${project.segments.length ? "" : "timeline-empty"}">
-        ${project.segments.length ? ([0, 1] as const).map((lane) => `<div class="lane-label">${lane === 0 ? "Main" : "Layer"}</div><div class="timeline-lane" data-lane="${lane}">${project.segments.map((segment, index) => segment.lane === lane ? segmentCard(segment, index) : "").join("") || `<span class="lane-empty">Drag or move a moment here</span>`}</div>`).join("") : `<p>Add a segment and it will appear here.</p>`}
+      <div class="timeline source-tracks">
+        ${sources.map((source) => `<button class="track-label ${selectedSlot === source.slot ? "selected" : ""}" style="--slot-color:${SLOT_COLORS[source.slot - 1]}" data-slot="${source.slot}" title="Switch to ${escapeHtml(source.title)}"><b>${source.slot}</b><span>${escapeHtml(source.title)}</span></button><div class="source-track" data-source="${source.id}">${project.segments.map((segment, index) => segment.sourceId === source.id ? segmentCard(segment, index) : "").join("") || `<span class="track-empty">Press <kbd>${source.slot}</kbd> to record a moment</span>`}</div>`).join("")}
       </div>
     </section>`;
 }
@@ -220,8 +225,7 @@ function segmentCard(segment: Segment, index: number) {
   const duration = segmentDuration(segment);
   return `<article class="segment" style="--slot-color:${SLOT_COLORS[slot - 1]};--segment-width:${Math.min(520, Math.max(190, duration * 18))}px" draggable="true" data-segment="${segment.id}">
     <span class="segment-index">${String(index + 1).padStart(2, "0")}</span><b>${slot}</b>
-    <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)} · lane ${segment.lane + 1}</small></span>
-    <button data-action="lane" data-id="${segment.id}" aria-label="Move to other lane">L${segment.lane + 1}</button>
+    <span class="segment-info"><strong>${escapeHtml(source?.title ?? "Missing source")}</strong><small>${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}</small></span>
     <button data-action="duplicate" data-id="${segment.id}" aria-label="Duplicate segment">⧉</button>
     <button data-action="delete" data-id="${segment.id}" aria-label="Delete segment">×</button>
     <div class="duration-bar" aria-label="${duration.toFixed(1)} second moment">
@@ -273,22 +277,15 @@ function bindEvents() {
     item.addEventListener("dragover", (event) => event.preventDefault());
     item.addEventListener("drop", (event) => { event.preventDefault(); event.stopPropagation(); reorderSegment(event.dataTransfer?.getData("text/plain") ?? "", item.dataset.segment!); });
   });
-  document.querySelectorAll<HTMLElement>("[data-lane]").forEach((lane) => {
-    lane.addEventListener("dragover", (event) => event.preventDefault());
-    lane.addEventListener("drop", (event) => {
-      event.preventDefault();
-      const segment = project.segments.find((item) => item.id === event.dataTransfer?.getData("text/plain"));
-      if (!segment) return;
-      segment.lane = Number(lane.dataset.lane) as 0 | 1;
-      saveProject();
-      render();
-    });
-  });
   document.querySelector("#play-toggle")?.addEventListener("click", togglePlayback);
   document.querySelector("#stop")?.addEventListener("click", () => { stopPlayback(); render(); });
 }
 
 function selectSlot(slot: number) {
+  if (mode === "mix" && captureSlot !== null) {
+    finishLiveCapture();
+    youtubePlayer?.pauseVideo();
+  }
   selectedSlot = slot;
   message = "";
   if (mode === "browse") editingSlot = slot;
@@ -351,7 +348,6 @@ function editSegment(action: string, id: string) {
   if (index < 0) return;
   if (action === "delete") project.segments.splice(index, 1);
   if (action === "duplicate") project.segments.splice(index + 1, 0, { ...project.segments[index], id: crypto.randomUUID() });
-  if (action === "lane") project.segments[index].lane = project.segments[index].lane === 0 ? 1 : 0;
   saveProject();
   render();
 }
@@ -400,7 +396,7 @@ function updateSegmentBar(card: HTMLElement | null, segment: Segment) {
   const duration = segmentDuration(segment);
   card.style.setProperty("--segment-width", `${Math.min(520, Math.max(190, duration * 18))}px`);
   const small = card.querySelector(".segment-info small");
-  if (small) small.textContent = `${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)} · lane ${segment.lane + 1}`;
+  if (small) small.textContent = `${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}`;
   const label = card.querySelector(".duration-bar em");
   if (label) label.textContent = `${duration.toFixed(1)}s`;
 }
@@ -474,6 +470,11 @@ async function mountPlayerForCurrentView() {
             playActiveSegment();
             animationFrame = requestAnimationFrame(tick);
           }
+          if (mode === "mix" && pendingCaptureSlot === selectedSlot) {
+            const slot = pendingCaptureSlot;
+            pendingCaptureSlot = null;
+            beginLiveCapture(slot);
+          }
         },
         onStateChange: (event: { data: number }) => {
           if (event.data === 3) setPlaybackStatus("Buffering…");
@@ -527,12 +528,88 @@ function setBoundFromPlayer(bound: "start" | "end") {
   render();
 }
 
+function finishLiveCapture() {
+  if (captureSlot === null) return;
+  const source = sourceForSlot(captureSlot);
+  if (source) {
+    const duration = Math.max(0.1, (performance.now() - captureStartedAt) / 1000);
+    project.segments.push({
+      id: crypto.randomUUID(),
+      sourceId: source.id,
+      sourceStartSeconds: captureSourceStart,
+      sourceEndSeconds: Number((captureSourceStart + duration).toFixed(1)),
+      lane: 0,
+    });
+    saveProject();
+  }
+  captureSlot = null;
+}
+
+function beginLiveCapture(slot: number) {
+  const source = sourceForSlot(slot);
+  if (!source || !youtubePlayer || !playerReady) {
+    pendingCaptureSlot = source ? slot : null;
+    return;
+  }
+  captureSlot = slot;
+  captureSourceStart = Math.max(0, startValue);
+  captureStartedAt = performance.now();
+  youtubePlayer.seekTo(captureSourceStart, true);
+  youtubePlayer.playVideo();
+  setPlaybackStatus(`Recording source ${slot} · press a number to trigger the next moment`);
+}
+
+function triggerLiveCapture(slot: number) {
+  const source = sourceForSlot(slot);
+  if (!source) {
+    selectSlot(slot);
+    return;
+  }
+  finishLiveCapture();
+  if (selectedSlot !== slot) {
+    selectedSlot = slot;
+    pendingCaptureSlot = slot;
+    message = "";
+    render();
+    return;
+  }
+  beginLiveCapture(slot);
+}
+
+function stopLiveCapture() {
+  if (captureSlot === null && pendingCaptureSlot === null) return;
+  finishLiveCapture();
+  pendingCaptureSlot = null;
+  youtubePlayer?.pauseVideo();
+  render();
+}
+
 function playActiveSegment() {
   const segment = project.segments[activePlaybackIndex];
   const source = segment && sourceForSegment(segment);
   if (!segment || !source || !youtubePlayer || !playerReady) return;
   const offset = Math.max(0, pausedAt - segmentStart(activePlaybackIndex));
   youtubePlayer.loadVideoById({ videoId: source.videoId, startSeconds: segment.sourceStartSeconds + offset, endSeconds: segment.sourceEndSeconds });
+}
+
+function seekToActiveSegment() {
+  const segment = project.segments[activePlaybackIndex];
+  if (!segment || !youtubePlayer || !playerReady) return;
+  youtubePlayer.seekTo(segment.sourceStartSeconds, true);
+  youtubePlayer.playVideo();
+  updateActiveMomentUi(segment);
+}
+
+function updateActiveMomentUi(segment: Segment) {
+  const source = sourceForSegment(segment);
+  if (!source) return;
+  document.querySelector<HTMLElement>(".stage")?.style.setProperty("--slot-color", SLOT_COLORS[source.slot - 1]);
+  const label = document.querySelector<HTMLElement>(".now-playing span");
+  const title = document.querySelector<HTMLElement>(".now-playing h1");
+  const times = document.querySelector<HTMLElement>(".now-playing p");
+  if (label) label.textContent = `NOW PLAYING · SOURCE ${source.slot}`;
+  if (title) title.textContent = source.title;
+  if (times) times.textContent = `${formatTime(segment.sourceStartSeconds)} → ${formatTime(segment.sourceEndSeconds)}`;
 }
 
 function updatePlayUi(elapsed: number) {
@@ -593,10 +670,19 @@ function tick() {
   }
   const nextIndex = findSegmentIndex(elapsed);
   if (nextIndex !== activePlaybackIndex) {
+    const previousSource = sourceForSegment(project.segments[activePlaybackIndex]);
+    const nextSource = sourceForSegment(project.segments[nextIndex]);
     activePlaybackIndex = nextIndex;
     pausedAt = segmentStart(nextIndex);
     playStartedAt = performance.now();
-    render();
+    if (previousSource?.videoId === nextSource?.videoId) {
+      seekToActiveSegment();
+      animationFrame = requestAnimationFrame(tick);
+      return;
+    }
+    playActiveSegment();
+    updateActiveMomentUi(project.segments[nextIndex]);
+    animationFrame = requestAnimationFrame(tick);
     return;
   }
   updatePlayUi(elapsed);
@@ -626,8 +712,10 @@ function isTypingTarget(target: EventTarget | null) {
 
 document.addEventListener("keydown", (event) => {
   if (isTypingTarget(event.target)) return;
-  if (/^[1-9]$/.test(event.key) && mode !== "play") { selectSlot(Number(event.key)); return; }
+  if (/^[1-9]$/.test(event.key) && mode === "mix") { triggerLiveCapture(Number(event.key)); return; }
+  if (/^[1-9]$/.test(event.key) && mode === "browse") { selectSlot(Number(event.key)); return; }
   if (mode === "mix" && event.key === "Enter") addSegment();
+  if (mode === "mix" && event.key === " ") { event.preventDefault(); stopLiveCapture(); }
   if (mode === "play" && event.key === " ") { event.preventDefault(); togglePlayback(); }
   if (event.key === "0") { stopPlayback(); render(); }
 });

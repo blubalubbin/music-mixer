@@ -26,7 +26,7 @@ flowchart LR
 - A source can be opened to search YouTube or paste a YouTube URL.
 - In Mix mode, the user marks a segment's start and end while previewing a source.
 - Pressing a source number can capture or trigger a segment, depending on the current state.
-- Segments can be reordered and placed on parallel lanes to create overlaps.
+- Each video source has a dedicated timeline track where its moments can be reviewed and reordered.
 - Play mode follows the arrangement and switches or layers the corresponding video players.
 
 ## Documentation
@@ -41,7 +41,7 @@ flowchart LR
 
 ## Recommended first version
 
-Start with a GitHub Pages-compatible front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, a two-lane timeline, and approximate sequenced playback. Add in-app YouTube search after the interaction model and live-player behavior have been tested.
+Start with a GitHub Pages-compatible front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, dedicated source tracks, and approximate sequenced playback. Add in-app YouTube search after the interaction model and live-player behavior have been tested.
 
 ## Development
 
@@ -54,4 +54,4 @@ npm run dev
 
 ## Status
 
-Phase 0 is underway. The working prototype includes the three-mode shell, nine locally saved YouTube source references, segment creation and validation, a reorderable two-lane arrangement, keyboard source selection, bounded clip previews with sound, and sequential playback through the official YouTube IFrame Player API.
+Phase 0 is underway. The working prototype includes the three-mode shell, nine locally saved YouTube source references, segment creation and validation, dedicated source tracks, live keyboard capture, bounded clip previews with sound, and sequential playback through the official YouTube IFrame Player API.

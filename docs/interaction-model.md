@@ -41,19 +41,18 @@ Recommended click path:
 
 Recommended keyboard path:
 
-1. Press `1`–`9` to select a source.
-2. Press `[` to set the start.
-3. Press `]` to set the end.
-4. Press `Enter` to add the segment.
-5. Press `Space` to preview or pause.
+1. Set the source start time in the segment editor.
+2. Press its `1`–`9` key to start playing and recording from that point.
+3. Press any source key to close the current moment and immediately trigger the next one.
+4. Press `Space` to close the final moment and pause.
 
-This is clearer than making a number press mean both “choose a source” and “mark time.” A later performance-recording mode can record numbered triggers as timestamped events.
+Repeated presses of the same key retrigger the same source start. The time between presses becomes the captured moment's duration. Clicking a source tile still selects it for precise start/end editing.
 
 ## Arrange: order and overlap
 
-The mix is a timeline of segment instances. Each instance points to one source and stores its own source start, source end, arrangement start, lane, and gain.
+The mix is a timeline of segment instances. Each instance points to one source and stores its own source start, source end, arrangement start, and gain.
 
-The layout describes the longer-term interaction model. For the supported first build, segments may occupy two visual lanes but YouTube playback is sequential. Concurrent overlap is an off-by-default experiment.
+Each loaded video source has a dedicated track. Selecting a track label switches the Mix editor to that source, while playback remains sequential in the supported first build. Concurrent overlap is an off-by-default experiment.
 
 ```mermaid
 gantt
@@ -69,7 +68,7 @@ gantt
     Source 6 overlap :19, 28
 ```
 
-Dragging a segment horizontally changes when it starts. Dragging it vertically changes its lane but not its timing. Dragging either edge trims the source start or end.
+Dragging a segment changes its order in the arrangement. Dragging either edge trims the source start or end.
 
 ## Play: reduce decisions
 

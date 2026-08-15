@@ -7,8 +7,8 @@ Goal: validate that Browse, Mix, and Play make sense before integrating live vid
 - Build the three-mode shell.
 - Begin with mock thumbnails, then connect pasted YouTube URLs through a single provider adapter.
 - Implement segment start/end editing.
-- Implement a two-lane draggable timeline.
-- Implement ordered sequential playback; retain a two-lane visual model for future overlaps.
+- Implement dedicated draggable tracks for each loaded source.
+- Implement ordered sequential playback; retain the source-track model for future overlaps.
 - Test the click and keyboard paths with users.
 
 Exit condition: a new user can create and play a short YouTube arrangement without explanation. The complete requirements are in the [first-build brief](first-build.md).
@@ -45,7 +45,7 @@ Goal: make overlaps sound intentional.
 - Add per-segment volume.
 - Add fade-in and fade-out handles.
 - Add optional snapping.
-- Record live number-key triggers into the timeline.
+- Refine live number-key recording with timing and buffering feedback.
 - Add JSON project export and import.
 
 ## Phase 3A — Local precision sources

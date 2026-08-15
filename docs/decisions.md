@@ -43,7 +43,7 @@ The timeline may represent multiple lanes, but the published first build guarant
 - Is the primary output a visual mixtape, an audio-focused mashup, or both equally?
 - During an overlap, should both videos remain visible, crossfade, or use a chosen layout?
 - Should overlapping audio play at equal volume by default or automatically duck one source?
-- Does pressing a number in Mix mode select a source, trigger it, or depend on an explicit capture state?
+- Should live number-key recording gain an explicit armed state, or remain immediately active in Mix mode?
 - Should play mode permit live improvisation or reproduce only the saved arrangement?
 - What should happen when an overlap source buffers but the main source is ready?
 
