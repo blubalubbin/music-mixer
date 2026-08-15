@@ -33,15 +33,16 @@ flowchart LR
 
 - [Product specification](docs/product-spec.md)
 - [Interaction model](docs/interaction-model.md)
+- [Source strategy](docs/source-strategy.md)
 - [Technical approach](docs/technical-approach.md)
+- [First-build brief](docs/first-build.md)
 - [Delivery roadmap](docs/roadmap.md)
 - [Decisions and open questions](docs/decisions.md)
 
 ## Recommended first version
 
-Start with a local, front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, a two-lane timeline, and simulated playback. Add YouTube search and live synchronized players after the interaction model has been tested.
+Start with a GitHub Pages-compatible front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, a two-lane timeline, and approximate sequenced playback. Add in-app YouTube search after the interaction model and live-player behavior have been tested.
 
 ## Status
 
 Concept documented. No application code has been implemented yet.
-

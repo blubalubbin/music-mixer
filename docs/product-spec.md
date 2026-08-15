@@ -30,15 +30,14 @@ A music fan, teacher, creator, or casual performer who understands playlists and
 
 The overview displays a `3 × 3` grid of source tiles numbered `1` through `9`.
 
-Selecting a tile opens a focused source picker. The user can:
+Selecting a tile opens a focused source picker. In the first build, the user can:
 
-- search for embeddable YouTube videos;
 - paste a YouTube URL;
-- preview a result;
+- preview the video;
 - assign the chosen video to the active slot; or
 - return to the grid without changing it.
 
-The full YouTube website is not embedded inside a tile. The product provides its own source-picker interface and loads the chosen video in an official embedded player.
+The full YouTube website is not embedded inside a tile. The product provides its own source-picker interface and loads the chosen video in an official embedded player. App-owned YouTube search is a later enhancement.
 
 ### Mix
 
@@ -53,7 +52,7 @@ Selecting a tile opens its segment controls:
 - add segment to arrangement; and
 - delete or duplicate segment.
 
-Segments inherit the source number and color. The arrangement supports:
+Segments inherit the source number and color. The product vision supports:
 
 - drag-to-reorder;
 - trim start and end;
@@ -62,11 +61,13 @@ Segments inherit the source number and color. The arrangement supports:
 - snapping that can be disabled for fine timing; and
 - a playhead for previewing the arrangement.
 
+The supported first build uses this timeline model but plays YouTube segments sequentially. Parallel audible playback remains experimental.
+
 ### Play
 
 Play mode reduces editing controls and emphasizes the current video, the next segment, elapsed time, remaining time, and a stop control.
 
-The timeline remains visible as a progress map. During an overlap, both active video sources are visible and their relative audio levels follow the mix definition.
+The timeline remains visible as a progress map. The first build emphasizes the current and upcoming segments. The broader vision may show and mix both sources during an overlap after that behavior has been validated.
 
 ## Keyboard model
 
@@ -87,7 +88,7 @@ The first release should avoid assigning two unrelated meanings to a number key 
 - Add a source by pasted YouTube URL.
 - Create a segment with start and end timestamps.
 - Arrange segments in order.
-- Place segments on two lanes and overlap them.
+- Display a two-lane timeline while playing YouTube segments sequentially.
 - Save the project locally in the browser.
 - Preview a segment.
 - Play the arrangement with clear buffering and error states.
@@ -101,6 +102,7 @@ The first release should avoid assigning two unrelated meanings to a number key 
 - Shareable mix definitions.
 - Project export/import as JSON.
 - Alternative media sources that allow tighter timing or audio analysis.
+- Feature-flagged simultaneous YouTube overlap, subject to technical and policy validation.
 
 ## Out of scope for the first release
 
@@ -109,4 +111,3 @@ The first release should avoid assigning two unrelated meanings to a number key 
 - Beat-perfect synchronization guarantees.
 - More than nine simultaneous sources.
 - A full professional multitrack editor.
-

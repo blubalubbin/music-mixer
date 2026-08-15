@@ -22,6 +22,22 @@ The first release aims for convincing audiovisual sequencing. It does not promis
 
 The first implementation should validate the interaction using mock players. This keeps product-learning work separate from buffering and API problems.
 
+### YouTube remains the first source
+
+The first build uses pasted YouTube URLs and the official embedded player. Local files may later provide precise mixing, but they do not replace the YouTube-first product experiment.
+
+### Source capabilities are explicit
+
+Each source provider declares whether it supports seeking, segment bounds, volume, overlap, waveform analysis, offline persistence, and precise timing. The interface must not display unsupported controls.
+
+### Spotify and Apple Music begin as references
+
+Spotify's platform restrictions and Apple Music's authentication and token requirements make them unsuitable for the first mixing engine. Future integrations may provide metadata, discovery, and deep links.
+
+### Sequential playback is the supported baseline
+
+The timeline may represent multiple lanes, but the published first build guarantees only one active audible YouTube source. Concurrent playback remains behind an off-by-default experimental flag until policy and technical behavior are validated.
+
 ## Open product questions
 
 - Is the primary output a visual mixtape, an audio-focused mashup, or both equally?
@@ -51,4 +67,3 @@ Use this format when an open question is resolved:
 - Alternatives considered:
 - Consequences:
 ```
-

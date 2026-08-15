@@ -53,6 +53,8 @@ This is clearer than making a number press mean both “choose a source” and �
 
 The mix is a timeline of segment instances. Each instance points to one source and stores its own source start, source end, arrangement start, lane, and gain.
 
+The layout describes the longer-term interaction model. For the supported first build, segments may occupy two visual lanes but YouTube playback is sequential. Concurrent overlap is an off-by-default experiment.
+
 ```mermaid
 gantt
     title Example arrangement
@@ -74,7 +76,7 @@ Dragging a segment horizontally changes when it starts. Dragging it vertically c
 Play mode shows:
 
 - the primary active video;
-- a smaller overlapping or upcoming video;
+- a smaller upcoming video, or an overlapping video when the experimental mode is enabled;
 - the sequence and playhead;
 - elapsed and remaining time;
 - buffering or unavailable-source warnings; and
@@ -89,4 +91,3 @@ Editing is intentionally unavailable until the user pauses or returns to Mix mod
 - Removed/private video: mark affected segments and offer to replace the source while preserving timestamps.
 - Buffering during playback: pause the arrangement clock or apply the project's chosen recovery policy.
 - Keyboard focus in a text field: number keys type normally and do not trigger sources.
-

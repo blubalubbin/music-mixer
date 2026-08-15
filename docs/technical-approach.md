@@ -43,16 +43,39 @@ flowchart TB
 
 The interaction prototype should use deterministic mock media first. This lets the timeline, keyboard controls, and mode transitions be tested without confusing UX defects with network-player limitations.
 
+The published application should remain a static client-side build compatible with GitHub Pages. Development occurs locally, while GitHub Actions builds and deploys the production artifact. The application must use a configurable base path so assets and routes work when served from a repository subpath.
+
+## Source adapters
+
+Playback providers should be isolated behind a common adapter rather than embedded throughout the interface:
+
+```ts
+interface SourceAdapter {
+  load(source: Source): Promise<void>;
+  cue(startSeconds: number): Promise<void>;
+  play(): Promise<void>;
+  pause(): Promise<void>;
+  stop(): Promise<void>;
+  seek(seconds: number): Promise<void>;
+  getCurrentTime(): number;
+  getState(): PlaybackState;
+  getCapabilities(): SourceCapabilities;
+}
+```
+
+The first implementation only needs `YouTubeSourceAdapter`. The abstraction exists to prevent future local-file or streamed-source support from forcing a rewrite of the timeline and project model. See [Source strategy](source-strategy.md).
+
 ## Data model
 
 ```ts
 type Source = {
   id: string;
   slot: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-  provider: "youtube";
-  videoId: string;
+  provider: "youtube" | "local-file" | "soundcloud" | "reference";
+  externalId?: string;
+  originalUrl?: string;
   title: string;
-  thumbnailUrl: string;
+  thumbnailUrl?: string;
   durationSeconds?: number;
 };
 
@@ -95,6 +118,8 @@ Suggested recovery policy for the first live version:
 - The application should use official players and APIs and must not download, extract, or rehost media.
 - API credentials must not be committed to the repository or shipped directly in browser code.
 - Player instances need enough space when visible to satisfy YouTube's embedded-player requirements; inactive players can be managed separately from the visible tile presentation.
+- YouTube's published requirements restrict automatic simultaneous playback. Sequential playback is the supported first-build behavior; concurrent overlap must remain experimental until reviewed.
+- Spotify and Apple Music credentials or private signing material must never be placed in the GitHub Pages bundle.
 
 ## Testing strategy
 
@@ -104,4 +129,3 @@ Suggested recovery policy for the first live version:
 4. Simulate delayed, failed, and unavailable players.
 5. Measure real playback drift across browsers and network conditions.
 6. Run usability sessions with people who have never used audio-editing software.
-
