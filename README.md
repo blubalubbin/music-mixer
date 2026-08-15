@@ -1,0 +1,47 @@
+# Music Mixer
+
+Music Mixer is a concept for an approachable browser-based tool that turns up to nine YouTube videos into a playable audiovisual mix.
+
+The experience has three modes:
+
+1. **Browse** — choose a video for each of nine numbered source slots.
+2. **Mix** — capture moments from those sources, order them, and overlap them.
+3. **Play** — perform the arrangement from beginning to end.
+
+The goal is to feel closer to arranging a mixtape or using a sampler than operating a professional digital audio workstation.
+
+## Concept map
+
+```mermaid
+flowchart LR
+    B["Browse<br/>Choose up to 9 sources"] --> M["Mix<br/>Capture and arrange segments"]
+    M --> P["Play<br/>Run the complete sequence"]
+    P --> M
+    M --> B
+```
+
+## Core interaction
+
+- Each source is assigned a number key from `1` to `9`.
+- A source can be opened to search YouTube or paste a YouTube URL.
+- In Mix mode, the user marks a segment's start and end while previewing a source.
+- Pressing a source number can capture or trigger a segment, depending on the current state.
+- Segments can be reordered and placed on parallel lanes to create overlaps.
+- Play mode follows the arrangement and switches or layers the corresponding video players.
+
+## Documentation
+
+- [Product specification](docs/product-spec.md)
+- [Interaction model](docs/interaction-model.md)
+- [Technical approach](docs/technical-approach.md)
+- [Delivery roadmap](docs/roadmap.md)
+- [Decisions and open questions](docs/decisions.md)
+
+## Recommended first version
+
+Start with a local, front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, a two-lane timeline, and simulated playback. Add YouTube search and live synchronized players after the interaction model has been tested.
+
+## Status
+
+Concept documented. No application code has been implemented yet.
+
