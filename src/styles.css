@@ -29,3 +29,16 @@ kbd{font:9px DM Mono;border:1px solid #41423e;padding:2px 5px;border-radius:2px;
 @media(max-width:850px){.topbar{grid-template-columns:auto 1fr;height:auto;padding-block:15px}.modes{grid-column:1/-1;grid-row:2;justify-content:center;margin-top:12px}.mode{padding:13px 20px}.project-meta{display:none}.section-heading,.mix-header{display:block}.lede,.mix-header>p{margin-top:20px}.source-grid{grid-template-columns:repeat(2,1fr)}.source-tile{min-height:160px}.workspace-footer{flex-wrap:wrap}.workspace-footer .primary{width:100%;margin:0}.picker-grid,.editor-layout{grid-template-columns:1fr}.source-dock,.source-strip{grid-template-columns:repeat(5,1fr)}.preview-card{min-height:300px}.preview-card img,.preview-empty{height:300px}.mock-player{min-height:280px}.up-next>div:nth-last-child(-n+2){display:none}}
 @media(max-width:520px){.workspace{padding-inline:14px}.source-grid{grid-template-columns:1fr 1fr;gap:7px}.source-tile{min-height:135px}.section-heading h1,.picker-copy h1{font-size:40px}.source-dock,.source-strip{grid-template-columns:repeat(3,1fr)}.url-row{display:block}.url-row input{border-right:1px solid #393a37}.url-row .primary{width:100%}.transport{grid-template-columns:auto 1fr auto}.transport button{grid-row:2}.play-button{grid-column:2;justify-self:center}.stop-button{grid-column:3}.now-playing{left:20px;bottom:20px}.stage{height:48vh}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+/* Live YouTube player */
+.youtube-player,.youtube-player iframe{width:100%;height:100%;min-height:380px;border:0;display:block}
+.mock-player::after{z-index:2;pointer-events:none}
+.mock-badge{pointer-events:none;background:#111d}
+.bound-buttons{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:9px}
+.bound-buttons button,.preview-button{border:1px solid #41423f;background:#222320;color:#bbb;padding:11px;font:9px DM Mono;text-transform:uppercase;letter-spacing:.06em}
+.bound-buttons button:hover,.preview-button:hover{border-color:#777;color:#fff}
+.preview-button{width:100%;margin-bottom:9px;background:#111;color:#fff}
+.stage .youtube-player,.stage .youtube-player iframe{min-height:100%;height:100%}
+.stage-shade{pointer-events:none;inset:55% 0 0}
+.now-playing{pointer-events:none}
+.playback-status{position:absolute;z-index:3;pointer-events:none;right:18px;top:14px;background:#111d;padding:7px 10px;margin:0;font:9px DM Mono;text-transform:uppercase;letter-spacing:.08em}

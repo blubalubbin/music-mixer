@@ -26,6 +26,32 @@ let playing = false;
 let playStartedAt = 0;
 let pausedAt = 0;
 let animationFrame = 0;
+let activePlaybackIndex = -1;
+let playerGeneration = 0;
+let playerReady = false;
+let youtubePlayer: YouTubePlayer | null = null;
+let youtubeApiPromise: Promise<void> | null = null;
+
+type YouTubePlayer = {
+  cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
+  loadVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
+  playVideo(): void;
+  pauseVideo(): void;
+  stopVideo(): void;
+  getCurrentTime(): number;
+  destroy(): void;
+};
+
+type YouTubeNamespace = {
+  Player: new (elementId: string, options: Record<string, unknown>) => YouTubePlayer;
+};
+
+declare global {
+  interface Window {
+    YT?: YouTubeNamespace;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
 
 function loadProject(): MixProject {
   try {
@@ -82,6 +108,7 @@ function render() {
       <main>${mode === "browse" ? browseView() : mode === "mix" ? mixView() : playView()}</main>
     </div>`;
   bindEvents();
+  queueMicrotask(mountPlayerForCurrentView);
 }
 
 function browseView() {
@@ -135,7 +162,7 @@ function sourcePicker(slot: number) {
             <input id="source-title" name="title" type="text" maxlength="60" placeholder="e.g. Opening drums" value="${source?.title ?? ""}" />
             ${message ? `<p class="form-error" role="alert">${escapeHtml(message)}</p>` : ""}
           </form>
-          <p class="fine-print">The live YouTube player comes next. This first prototype uses the official thumbnail and a deterministic mock player.</p>
+          <p class="fine-print">Playback uses YouTube’s official embedded player. Some private, removed, age-restricted, or embedding-disabled videos may not play here.</p>
         </div>
         <div class="preview-card" style="--slot-color:${SLOT_COLORS[slot - 1]}">
           <span class="preview-number">${slot}</span>
@@ -154,7 +181,7 @@ function mixView() {
       <div class="source-strip">${Array.from({ length: 9 }, (_, index) => sourceTile(index + 1, true)).join("")}</div>
       <div class="editor-layout">
         <section class="mock-player" style="--slot-color:${SLOT_COLORS[selectedSlot - 1]}">
-          ${source ? `<img src="https://i.ytimg.com/vi/${source.videoId}/hqdefault.jpg" alt="" /><span class="mock-badge">Mock preview</span><span class="play-disc">▶</span>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
+          ${source ? `<div id="youtube-player" class="youtube-player"></div><span class="mock-badge">YouTube preview · sound on</span>` : `<div class="no-source"><span>${selectedSlot}</span><p>Add a video to this slot in Browse mode.</p><button class="text-button" data-mode="browse">Go to Browse →</button></div>`}
         </section>
         <section class="segment-editor">
           <p class="eyebrow">SEGMENT FROM SOURCE ${selectedSlot}</p>
@@ -166,6 +193,8 @@ function mixView() {
           </div>
           <div class="duration-readout"><span>Moment length</span><b>${formatTime(endValue - startValue)}</b></div>
           ${message ? `<p class="form-error" role="alert">${escapeHtml(message)}</p>` : ""}
+          <div class="bound-buttons"><button id="set-start">Set start at playhead</button><button id="set-end">Set end at playhead</button></div>
+          <button class="preview-button" id="preview-segment" ${source ? "" : "disabled"}>▶ Preview this clip with sound</button>
           <button class="primary wide" id="add-segment" ${source ? "" : "disabled"}>Add to mix <span>＋</span></button>
           <p class="shortcut">Shortcuts: <kbd>[</kbd> start · <kbd>]</kbd> end · <kbd>Enter</kbd> add</p>
         </section>
@@ -207,7 +236,7 @@ function playView() {
     <section class="workspace play-workspace">
       <div class="performance-label"><span>PERFORMANCE MODE</span><i class="${playing ? "live" : ""}"></i>${playing ? "Playing" : elapsed ? "Paused" : "Ready"}</div>
       <div class="stage" style="--slot-color:${source ? SLOT_COLORS[source.slot - 1] : "#777"}">
-        ${source ? `<img src="https://i.ytimg.com/vi/${source.videoId}/maxresdefault.jpg" onerror="this.src='https://i.ytimg.com/vi/${source.videoId}/hqdefault.jpg'" alt="" /><div class="stage-shade"></div><div class="now-playing"><span>NOW PLAYING · SOURCE ${source.slot}</span><h1>${escapeHtml(source.title)}</h1><p>${formatTime(active!.sourceStartSeconds)} → ${formatTime(active!.sourceEndSeconds)}</p></div>` : `<div class="empty-stage"><p>${project.segments.length ? "Press play to begin your mix." : "Your mix needs at least one segment."}</p></div>`}
+        ${source ? `<div id="youtube-player" class="youtube-player"></div><div class="stage-shade"></div><div class="now-playing"><span>NOW PLAYING · SOURCE ${source.slot}</span><h1>${escapeHtml(source.title)}</h1><p>${formatTime(active!.sourceStartSeconds)} → ${formatTime(active!.sourceEndSeconds)}</p></div><p class="playback-status" role="status">Press play to hear this clip</p>` : `<div class="empty-stage"><p>${project.segments.length ? "Press play to begin your mix." : "Your mix needs at least one segment."}</p></div>`}
       </div>
       <div class="transport">
         <span>${formatTime(elapsed)}</span><div class="progress"><i style="width:${total ? Math.min(100, elapsed / total * 100) : 0}%"></i></div><span>−${formatTime(Math.max(0, total - elapsed))}</span>
@@ -226,6 +255,9 @@ function bindEvents() {
   document.querySelector<HTMLFormElement>("#source-form")?.addEventListener("submit", assignSource);
   document.querySelector<HTMLInputElement>("#project-title")?.addEventListener("change", (event) => { project.title = (event.target as HTMLInputElement).value.trim() || "Untitled mix"; saveProject(); render(); });
   document.querySelector("#add-segment")?.addEventListener("click", addSegment);
+  document.querySelector("#preview-segment")?.addEventListener("click", previewSegment);
+  document.querySelector("#set-start")?.addEventListener("click", () => setBoundFromPlayer("start"));
+  document.querySelector("#set-end")?.addEventListener("click", () => setBoundFromPlayer("end"));
   document.querySelector<HTMLInputElement>("#start-time")?.addEventListener("input", updateTimeValues);
   document.querySelector<HTMLInputElement>("#end-time")?.addEventListener("input", updateTimeValues);
   document.querySelectorAll<HTMLElement>("[data-action]").forEach((button) => button.addEventListener("click", () => editSegment(button.dataset.action!, button.dataset.id!)));
@@ -324,35 +356,197 @@ function currentElapsed() {
   return playing ? Math.min(totalDuration(project.segments), pausedAt + (performance.now() - playStartedAt) / 1000) : pausedAt;
 }
 
+function loadYouTubeApi() {
+  if (window.YT?.Player) return Promise.resolve();
+  if (youtubeApiPromise) return youtubeApiPromise;
+  youtubeApiPromise = new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error("YouTube player took too long to load.")), 15000);
+    window.onYouTubeIframeAPIReady = () => {
+      window.clearTimeout(timeout);
+      resolve();
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.onerror = () => {
+      window.clearTimeout(timeout);
+      reject(new Error("YouTube player could not be loaded."));
+    };
+    document.head.append(script);
+  });
+  return youtubeApiPromise;
+}
+
+async function mountPlayerForCurrentView() {
+  const host = document.querySelector("#youtube-player");
+  if (!host) return;
+  const source = mode === "mix" ? sourceForSlot(selectedSlot) : sourceForSegment(project.segments[Math.max(0, activePlaybackIndex)] ?? project.segments[0]);
+  if (!source) return;
+  const generation = ++playerGeneration;
+  playerReady = false;
+  try {
+    youtubePlayer?.destroy();
+  } catch { /* The preceding render may already have removed its iframe. */ }
+  youtubePlayer = null;
+  setPlaybackStatus("Loading YouTube player…");
+  try {
+    await loadYouTubeApi();
+    if (generation !== playerGeneration || !document.querySelector("#youtube-player")) return;
+    youtubePlayer = new window.YT!.Player("youtube-player", {
+      width: "100%",
+      height: "100%",
+      videoId: source.videoId,
+      host: "https://www.youtube-nocookie.com",
+      playerVars: { playsinline: 1, rel: 0, origin: window.location.origin },
+      events: {
+        onReady: () => {
+          if (generation !== playerGeneration) return;
+          playerReady = true;
+          setPlaybackStatus(mode === "play" ? "Ready · sound on" : "Ready to preview with sound");
+          if (mode === "play" && playing) {
+            playStartedAt = performance.now();
+            playActiveSegment();
+            animationFrame = requestAnimationFrame(tick);
+          }
+        },
+        onStateChange: (event: { data: number }) => {
+          if (event.data === 3) setPlaybackStatus("Buffering…");
+          if (event.data === 1) setPlaybackStatus("Playing with sound");
+          if (event.data === 2) setPlaybackStatus("Paused");
+        },
+        onError: (event: { data: number }) => {
+          playing = false;
+          cancelAnimationFrame(animationFrame);
+          setPlaybackStatus(`This video cannot be played here (error ${event.data}).`);
+        },
+      },
+    });
+  } catch (error) {
+    setPlaybackStatus(error instanceof Error ? error.message : "YouTube player could not be loaded.");
+  }
+}
+
+function setPlaybackStatus(status: string) {
+  const element = document.querySelector<HTMLElement>(".playback-status, .mock-badge");
+  if (element) element.textContent = status;
+}
+
+function previewSegment() {
+  updateTimeValues();
+  const source = sourceForSlot(selectedSlot);
+  if (!source || !youtubePlayer || !playerReady) {
+    message = "The YouTube player is still loading. Try again in a moment.";
+    render();
+    return;
+  }
+  if (startValue < 0 || endValue <= startValue) {
+    message = "Start must be zero or later, and end must be after start.";
+    render();
+    return;
+  }
+  message = "";
+  youtubePlayer.loadVideoById({ videoId: source.videoId, startSeconds: startValue, endSeconds: endValue });
+  setPlaybackStatus("Playing clip with sound");
+}
+
+function setBoundFromPlayer(bound: "start" | "end") {
+  if (!youtubePlayer || !playerReady) return;
+  const time = Math.max(0, Number(youtubePlayer.getCurrentTime().toFixed(1)));
+  if (bound === "start") startValue = time;
+  else endValue = time;
+  render();
+}
+
+function playActiveSegment() {
+  const segment = project.segments[activePlaybackIndex];
+  const source = segment && sourceForSegment(segment);
+  if (!segment || !source || !youtubePlayer || !playerReady) return;
+  const offset = Math.max(0, pausedAt - segmentStart(activePlaybackIndex));
+  youtubePlayer.loadVideoById({ videoId: source.videoId, startSeconds: segment.sourceStartSeconds + offset, endSeconds: segment.sourceEndSeconds });
+}
+
+function updatePlayUi(elapsed: number) {
+  const total = totalDuration(project.segments);
+  const values = document.querySelectorAll<HTMLElement>(".transport > span");
+  if (values.length === 2) {
+    values[0].textContent = formatTime(elapsed);
+    values[1].textContent = `−${formatTime(Math.max(0, total - elapsed))}`;
+  }
+  const progress = document.querySelector<HTMLElement>(".progress i");
+  if (progress) progress.style.width = `${total ? Math.min(100, elapsed / total * 100) : 0}%`;
+}
+
 function togglePlayback() {
   if (playing) {
     pausedAt = currentElapsed();
     playing = false;
     cancelAnimationFrame(animationFrame);
-    render();
+    youtubePlayer?.pauseVideo();
+    const button = document.querySelector<HTMLButtonElement>("#play-toggle");
+    if (button) button.textContent = "▶";
+    updatePerformanceLabel("Paused", false);
+    setPlaybackStatus("Paused");
     return;
   }
   if (pausedAt >= totalDuration(project.segments)) pausedAt = 0;
+  activePlaybackIndex = findSegmentIndex(pausedAt);
   playing = true;
   playStartedAt = performance.now();
+  if (playerReady) playActiveSegment();
+  const button = document.querySelector<HTMLButtonElement>("#play-toggle");
+  if (button) button.textContent = "Ⅱ";
+  updatePerformanceLabel("Playing", true);
   tick();
+}
+
+function updatePerformanceLabel(label: string, live: boolean) {
+  const container = document.querySelector<HTMLElement>(".performance-label");
+  if (!container) return;
+  const textNode = Array.from(container.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+  if (textNode) textNode.textContent = label;
+  container.querySelector("i")?.classList.toggle("live", live);
 }
 
 function tick() {
   if (!playing) return;
-  if (currentElapsed() >= totalDuration(project.segments)) {
+  const elapsed = currentElapsed();
+  if (elapsed >= totalDuration(project.segments)) {
     playing = false;
     pausedAt = totalDuration(project.segments);
+    youtubePlayer?.stopVideo();
+    updatePlayUi(pausedAt);
+    const button = document.querySelector<HTMLButtonElement>("#play-toggle");
+    if (button) button.textContent = "▶";
+    updatePerformanceLabel("Complete", false);
+    setPlaybackStatus("Mix complete");
+    return;
+  }
+  const nextIndex = findSegmentIndex(elapsed);
+  if (nextIndex !== activePlaybackIndex) {
+    activePlaybackIndex = nextIndex;
+    pausedAt = segmentStart(nextIndex);
+    playStartedAt = performance.now();
     render();
     return;
   }
-  render();
+  updatePlayUi(elapsed);
   animationFrame = requestAnimationFrame(tick);
+}
+
+function findSegmentIndex(elapsed: number) {
+  let cursor = 0;
+  for (let index = 0; index < project.segments.length; index += 1) {
+    cursor += segmentDuration(project.segments[index]);
+    if (elapsed < cursor) return index;
+  }
+  return Math.max(0, project.segments.length - 1);
 }
 
 function stopPlayback() {
   playing = false;
   pausedAt = 0;
+  activePlaybackIndex = -1;
+  youtubePlayer?.stopVideo();
   cancelAnimationFrame(animationFrame);
 }
 

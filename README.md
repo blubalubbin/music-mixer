@@ -54,4 +54,4 @@ npm run dev
 
 ## Status
 
-Phase 0 is underway. The first working prototype includes the three-mode shell, nine locally saved YouTube source references, segment creation and validation, a reorderable two-lane arrangement, keyboard source selection, and deterministic sequential mock playback. Live YouTube player integration is the next provider milestone.
+Phase 0 is underway. The working prototype includes the three-mode shell, nine locally saved YouTube source references, segment creation and validation, a reorderable two-lane arrangement, keyboard source selection, bounded clip previews with sound, and sequential playback through the official YouTube IFrame Player API.
