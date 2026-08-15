@@ -90,6 +90,7 @@ let suppressNextMomentClick = false;
 let suppressNextTimelineSeek = false;
 let lastAddedMomentId: string | null = null;
 let navigationRailCollapsed = false;
+let lastTrackSortSegmentId: string | null = null;
 
 type YouTubePlayer = {
   cueVideoById(options: { videoId: string; startSeconds?: number; endSeconds?: number }): void;
@@ -101,6 +102,7 @@ type YouTubePlayer = {
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   getDuration(): number;
+  getVideoData(): { video_id?: string };
   getPlaybackRate(): number;
   getAvailablePlaybackRates(): number[];
   setPlaybackRate(rate: number): void;
@@ -346,6 +348,7 @@ function timelineView() {
   const columnWidths = timelineColumnWidths();
   const columns = columnWidths.map((width) => `${width}px`).join(" ");
   const elapsed = currentElapsed();
+  lastTrackSortSegmentId = project.segments[findSegmentIndex(elapsed)]?.id ?? null;
   const sources = sourcesByDistanceToHead(elapsed);
   return `
     <section class="timeline-section">
@@ -377,6 +380,9 @@ function sourcesByDistanceToHead(elapsed: number) {
 function reorderTracksByDistanceToHead(elapsed: number) {
   const tracks = document.querySelector<HTMLElement>(".source-tracks");
   if (!tracks || tracks.querySelector(".segment.dragging, .segment.trimming") || tracks.classList.contains("panning")) return;
+  const highlightedSegmentId = project.segments[findSegmentIndex(elapsed)]?.id ?? null;
+  if (highlightedSegmentId === lastTrackSortSegmentId) return;
+  lastTrackSortSegmentId = highlightedSegmentId;
   const ordered = sourcesByDistanceToHead(elapsed);
   const current = [...tracks.querySelectorAll<HTMLElement>(":scope > .source-track")].map((track) => track.dataset.source);
   if (ordered.every((source, index) => source.id === current[index])) return;
@@ -398,7 +404,6 @@ function timelineToolbar(zoomBounds: { min: number; max: number }) {
       <button id="redo-project" type="button" ${redoStack.length ? "" : "disabled"} title="Redo (⌘⇧Z / Ctrl+Y)"><span aria-hidden="true">↷</span> Redo</button>
     </div>
     ${selectionTools()}
-    ${project.segments.length ? `<div class="segment-navigation" aria-label="Segment navigation"><button id="previous-segment" type="button" ${activePlaybackIndex <= 0 ? "disabled" : ""}>Previous segment <kbd>←</kbd></button><button id="next-segment" type="button" ${activePlaybackIndex >= project.segments.length - 1 ? "disabled" : ""}>Next segment <kbd>→</kbd></button></div>` : ""}
     <div class="timeline-settings ${timelineSettingsOpen ? "open" : ""}">
       <button class="settings-cog" id="timeline-settings-toggle" type="button" aria-label="Timeline settings" aria-expanded="${timelineSettingsOpen}" aria-controls="timeline-settings-panel">⚙</button>
       <div class="settings-panel" id="timeline-settings-panel" ${timelineSettingsOpen ? "" : "hidden"}>
@@ -425,7 +430,7 @@ function segmentDefinitionRuler() {
   const startPercent = Math.min(100, Math.max(0, startValue / total * 100));
   const endPercent = Math.min(100, Math.max(startPercent, endValue / total * 100));
   return `<div class="segment-definition" aria-label="Segment from ${formatTime(startValue)} to ${formatTime(endValue)} of ${formatTime(total)}">
-    <div class="definition-labels"><span>Clip range · ${sourceSegments.length} timeline moment${sourceSegments.length === 1 ? "" : "s"}</span><span>${formatTime(startValue)} → ${formatTime(endValue)} / ${formatTime(total)}</span></div>
+    <div class="definition-labels"><span>Clip range · ${sourceSegments.length} timeline moment${sourceSegments.length === 1 ? "" : "s"}</span>${rangeSegment ? `<span class="definition-navigation" aria-label="Segment navigation"><button id="previous-segment" type="button" data-range-action="previous" ${activePlaybackIndex <= 0 ? "disabled" : ""}>← Previous</button><button id="next-segment" type="button" data-range-action="next" ${activePlaybackIndex >= project.segments.length - 1 ? "disabled" : ""}>Next →</button></span>` : `<span></span>`}<span class="definition-summary">${rangeSegment ? `<button type="button" data-range-action="speed" aria-label="Change highlighted segment speed, currently ${segmentPlaybackRate(rangeSegment)} times">${segmentPlaybackRate(rangeSegment)}×</button>` : ""}<span>${formatTime(startValue)} → ${formatTime(endValue)} / ${formatTime(total)}</span>${rangeSegment ? `<span class="definition-summary-actions"><button type="button" class="range-delete" data-range-action="delete" aria-label="Delete highlighted segment">Delete</button></span>` : ""}</span></div>
     <div class="definition-ruler"><i class="definition-range" data-range-bound="range" style="left:${startPercent}%;width:${endPercent - startPercent}%" aria-label="Drag clip range, currently ${formatTime(startValue)} to ${formatTime(endValue)}"></i><button type="button" class="definition-start" data-range-bound="start" style="left:${startPercent}%" aria-label="Drag clip start, currently ${formatTime(startValue)}"><span>${formatTime(startValue)}</span></button><button type="button" class="definition-end" data-range-bound="end" style="left:${endPercent}%" aria-label="Drag clip end, currently ${formatTime(endValue)}"><span>${formatTime(endValue)}</span></button></div>
     <div class="source-segment-points" aria-label="Timeline moments from this source">${sourceSegments.map((segment, index) => {
       const left = Math.min(100, Math.max(0, segment.sourceStartSeconds / total * 100));
@@ -438,6 +443,10 @@ function segmentDefinitionRuler() {
 function updateSegmentDefinitionRuler() {
   const current = document.querySelector<HTMLElement>(".segment-definition");
   if (!current) return;
+  // Replacing the ruler during an active pointer gesture disconnects the
+  // captured handle and prevents the remaining drag events from updating the
+  // highlighted segment. Player state changes can request redraws at any time.
+  if (current.querySelector(".dragging")) return;
   const shell = document.createElement("div");
   shell.innerHTML = segmentDefinitionRuler();
   current.replaceWith(shell.firstElementChild!);
@@ -629,12 +638,21 @@ function bindEvents() {
   document.querySelector("#set-start")?.addEventListener("click", () => setBoundFromPlayer("start"));
   document.querySelector("#set-end")?.addEventListener("click", setEndFromPlayer);
   document.querySelector(".video-preview-column")?.addEventListener("pointerdown", beginClipRangeDrag);
+  document.querySelector(".video-preview-column")?.addEventListener("click", handleRangeSummaryAction);
   document.querySelector<HTMLInputElement>("#start-time")?.addEventListener("input", updateTimeValues);
   document.querySelector<HTMLInputElement>("#end-time")?.addEventListener("input", updateTimeValues);
   bindTimelineEvents(document);
   document.querySelector("#play-toggle")?.addEventListener("click", togglePlayback);
   document.querySelector("#stop")?.addEventListener("click", () => { stopPlayback(); render(); });
   bindTimelineControls(document);
+}
+
+function handleRangeSummaryAction(event: Event) {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-range-action]");
+  if (!button || !rangeSegmentId) return;
+  if (button.dataset.rangeAction === "previous") { navigateSegment(-1); return; }
+  if (button.dataset.rangeAction === "next") { navigateSegment(1); return; }
+  editSegment(button.dataset.rangeAction!, rangeSegmentId);
 }
 
 function beginClipRangeDrag(event: Event) {
@@ -1487,7 +1505,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
     playing = true;
     playStartedAt = performance.now();
     pauseWhenFrameAvailable = false;
-    loadedVideoId = source.videoId;
+    setLoadedVideoId(source.videoId);
     youtubePlayer.loadVideoById(options);
     applyPlaybackRate(segment);
     updatePlaybackButtons();
@@ -1495,7 +1513,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
   } else {
     if (!frameBufferingEnabled) {
       pauseWhenFrameAvailable = false;
-      loadedVideoId = source.videoId;
+      setLoadedVideoId(source.videoId);
       loadedVideoHasFrame = false;
       youtubePlayer.cueVideoById(options);
       applyPlaybackRate(segment);
@@ -1503,7 +1521,7 @@ function cueArrangementAtPausedPosition(resumePlayback: boolean) {
       youtubePlayer.seekTo(options.startSeconds, true);
       youtubePlayer.pauseVideo();
     } else {
-      loadedVideoId = source.videoId;
+      setLoadedVideoId(source.videoId);
       loadedVideoHasFrame = false;
       pauseWhenFrameAvailable = true;
       youtubePlayer.loadVideoById(options);
@@ -1525,12 +1543,12 @@ function seekTimelinePreviewThrottled(elapsed: number) {
   bufferedArrangementSegmentId = segment.id;
   if (!frameBufferingEnabled) {
     pauseWhenFrameAvailable = false;
-    loadedVideoId = source.videoId;
+    setLoadedVideoId(source.videoId);
     loadedVideoHasFrame = false;
     youtubePlayer.cueVideoById(options);
     applyPlaybackRate(segment);
   } else if (loadedVideoId !== source.videoId || !loadedVideoHasFrame) {
-    loadedVideoId = source.videoId;
+    setLoadedVideoId(source.videoId);
     loadedVideoHasFrame = false;
     pauseWhenFrameAvailable = true;
     youtubePlayer.loadVideoById(options);
@@ -1850,19 +1868,18 @@ function editSegment(action: string, id: string) {
   render();
 }
 
-function reorderSegment(fromId: string, toId: string, draggedIds?: Set<string>, placeAfter = false) {
+function reorderSegmentsAtIndex(fromId: string, insertionIndex: number, draggedIds?: Set<string>) {
   const fromSegment = project.segments.find((segment) => segment.id === fromId);
-  if (!fromSegment || !project.segments.some((segment) => segment.id === toId)) return;
+  if (!fromSegment) return;
   const moving = draggedIds
     ? project.segments.filter((segment) => draggedIds.has(segment.id))
     : fromSegment.groupId ? project.segments.filter((segment) => segment.groupId === fromSegment.groupId) : [fromSegment];
-  if (moving.some((segment) => segment.id === toId)) return;
   const movingIds = new Set(moving.map((segment) => segment.id));
   const remaining = project.segments.filter((segment) => !movingIds.has(segment.id));
-  const targetIndex = remaining.findIndex((segment) => segment.id === toId);
-  const insertionIndex = targetIndex < 0 ? remaining.length : targetIndex + (placeAfter ? 1 : 0);
-  remaining.splice(insertionIndex, 0, ...moving);
-  project.segments = remaining;
+  const boundedIndex = Math.max(0, Math.min(remaining.length, insertionIndex));
+  const reordered = [...remaining.slice(0, boundedIndex), ...moving, ...remaining.slice(boundedIndex)];
+  if (reordered.every((segment, index) => segment.id === project.segments[index]?.id)) return;
+  project.segments = reordered;
   saveProject();
   if (mode === "mix") refreshTimeline(false);
   else render();
@@ -1894,10 +1911,28 @@ function beginSegmentReorder(event: PointerEvent) {
   let pointerY = event.clientY;
   let edgePanFrame = 0;
   let dragging = false;
-  let dropTarget: HTMLElement | null = null;
-  let dropColumn: HTMLElement[] = [];
-  let placeAfter = false;
+  let insertionIndex: number | null = null;
+  let insertionDistance = Infinity;
+  let placeholder: HTMLDivElement | null = null;
   card.setPointerCapture(event.pointerId);
+  const remaining = project.segments.filter((segment) => !movingIds.has(segment.id));
+  const representativeFor = (segmentId: string) => {
+    const index = project.segments.findIndex((segment) => segment.id === segmentId);
+    return [...document.querySelectorAll<HTMLElement>(`[data-index="${index}"]`)]
+      .find((item) => !item.classList.contains("dragging"));
+  };
+  const insertionBoundaries = () => {
+    if (!remaining.length) return [{ index: 0, x: tracks?.getBoundingClientRect().left ?? pointerX }];
+    const entries = remaining.flatMap((segment, index) => {
+      const element = representativeFor(segment.id);
+      return element ? [{ index, bounds: element.getBoundingClientRect() }] : [];
+    });
+    if (!entries.length) return [];
+    return [
+      ...entries.map((entry) => ({ index: entry.index, x: entry.bounds.left })),
+      { index: remaining.length, x: entries.at(-1)!.bounds.right },
+    ];
+  };
   const updateDraggedCards = () => {
     const transformedBounds = card.getBoundingClientRect();
     const untransformedLeft = transformedBounds.left - appliedDeltaX;
@@ -1907,26 +1942,24 @@ function beginSegmentReorder(event: PointerEvent) {
     movingCards.forEach((item) => { item.style.transform = `translate3d(${deltaX}px,${deltaY}px,0)`; });
     appliedDeltaX = deltaX;
     appliedDeltaY = deltaY;
-    dropTarget?.classList.remove("drop-target");
-    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
-    const targets = [...document.querySelectorAll<HTMLElement>(".segment[data-segment]")]
-      .filter((item) => Boolean(item.dataset.segment && !movingIds.has(item.dataset.segment)));
-    dropTarget = targets.sort((a, b) => {
-      const aBounds = a.getBoundingClientRect();
-      const bBounds = b.getBoundingClientRect();
-      return Math.abs(pointerX - (aBounds.left + aBounds.width / 2))
-        - Math.abs(pointerX - (bBounds.left + bBounds.width / 2));
-    })[0] ?? null;
-    if (!dropTarget) return;
-    placeAfter = pointerX > dropTarget.getBoundingClientRect().left + dropTarget.getBoundingClientRect().width / 2;
-    dropTarget.classList.add("drop-target");
-    dropTarget.classList.toggle("drop-after", placeAfter);
-    dropColumn = [...document.querySelectorAll<HTMLElement>(`[data-index="${dropTarget.dataset.index}"]`)]
-      .filter((item) => !item.classList.contains("dragging"));
-    dropColumn.forEach((item) => {
-      item.classList.add("drop-column");
-      item.classList.toggle("drop-after", placeAfter);
-    });
+    const candidates = insertionBoundaries();
+    const candidate = candidates.reduce<{ index: number; x: number; distance: number } | null>((nearest, boundary) => {
+      const distance = Math.abs(pointerX - boundary.x);
+      return !nearest || distance < nearest.distance ? { ...boundary, distance } : nearest;
+    }, null);
+    if (!candidate) return;
+    if (insertionIndex === null || candidate.index === insertionIndex || candidate.distance + 10 < insertionDistance) {
+      insertionIndex = candidate.index;
+      insertionDistance = candidate.distance;
+    }
+    const activeBoundary = candidates.find((boundary) => boundary.index === insertionIndex) ?? candidate;
+    insertionDistance = Math.abs(pointerX - activeBoundary.x);
+    if (placeholder && tracks) {
+      const bounds = tracks.getBoundingClientRect();
+      placeholder.style.left = `${activeBoundary.x}px`;
+      placeholder.style.top = `${bounds.top + 29}px`;
+      placeholder.style.height = `${Math.max(20, bounds.height - 34)}px`;
+    }
   };
   const edgePan = () => {
     if (!dragging || !tracks) return;
@@ -1938,13 +1971,7 @@ function beginSegmentReorder(event: PointerEvent) {
     if (Math.abs(panSpeed) > 0.1) {
       const previousScroll = tracks.scrollLeft;
       tracks.scrollLeft += panSpeed;
-      if (tracks.scrollLeft !== previousScroll) {
-        pausedAt = elapsedAtCenteredHead(tracks);
-        activePlaybackIndex = findSegmentIndex(pausedAt);
-        adaptTimelineZoomAtHead(tracks, pausedAt);
-        updatePlayUi(pausedAt);
-        updateDraggedCards();
-      }
+      if (tracks.scrollLeft !== previousScroll) updateDraggedCards();
     }
     edgePanFrame = requestAnimationFrame(edgePan);
   };
@@ -1954,36 +1981,32 @@ function beginSegmentReorder(event: PointerEvent) {
     if (!dragging && Math.hypot(pointerX - originX, pointerY - originY) > 6) {
       dragging = true;
       card.dataset.dragged = "true";
-      timelineHeadLocked = false;
-      tracks?.classList.add("head-unlocked");
       movingCards.forEach((item) => item.classList.add("dragging"));
+      placeholder = document.createElement("div");
+      placeholder.className = "segment-drop-placeholder";
+      placeholder.innerHTML = "<span>Drop</span>";
+      document.body.append(placeholder);
       edgePanFrame = requestAnimationFrame(edgePan);
     }
     if (!dragging) return;
     updateDraggedCards();
   };
-  const end = () => {
+  const finish = (commit: boolean) => {
     cancelAnimationFrame(edgePanFrame);
     card.removeEventListener("pointermove", move);
     card.removeEventListener("pointerup", end);
     card.removeEventListener("pointercancel", cancel);
     movingCards.forEach((item) => { item.classList.remove("dragging"); item.style.removeProperty("transform"); });
-    dropTarget?.classList.remove("drop-target", "drop-after");
-    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
+    placeholder?.remove();
+    placeholder = null;
     if (!dragging) return;
     suppressNextTimelineSeek = true;
     window.setTimeout(() => { suppressNextTimelineSeek = false; }, 0);
-    if (dropTarget?.dataset.segment) reorderSegment(fromId, dropTarget.dataset.segment, movingIds, placeAfter);
+    if (commit && insertionIndex !== null) reorderSegmentsAtIndex(fromId, insertionIndex, movingIds);
+    else window.setTimeout(() => { delete card.dataset.dragged; }, 0);
   };
-  const cancel = () => {
-    cancelAnimationFrame(edgePanFrame);
-    card.removeEventListener("pointermove", move);
-    card.removeEventListener("pointerup", end);
-    card.removeEventListener("pointercancel", cancel);
-    movingCards.forEach((item) => { item.classList.remove("dragging"); item.style.removeProperty("transform"); });
-    dropTarget?.classList.remove("drop-target", "drop-after");
-    dropColumn.forEach((item) => item.classList.remove("drop-column", "drop-after"));
-  };
+  const end = () => finish(true);
+  const cancel = () => finish(false);
   card.addEventListener("pointermove", move);
   card.addEventListener("pointerup", end);
   card.addEventListener("pointercancel", cancel);
@@ -2019,7 +2042,10 @@ function availablePlaybackRatesForSegment(segment: Segment) {
 function applyPlaybackRate(segment: Segment) {
   if (!youtubePlayer || !playerReady) return;
   const requested = segmentPlaybackRate(segment);
-  const available = youtubePlayer.getAvailablePlaybackRates();
+  // The iframe API can temporarily return undefined while loadVideoById is
+  // replacing one source with another. Treat that handoff as the default-rate
+  // state instead of terminating the arrangement animation tick.
+  const available = youtubePlayer.getAvailablePlaybackRates() ?? [];
   youtubePlayer.setPlaybackRate(available.includes(requested) ? requested : 1);
 }
 
@@ -2128,7 +2154,7 @@ async function mountPlayerForCurrentView() {
         onReady: () => {
           if (generation !== playerGeneration) return;
           playerReady = true;
-          activeVideoDuration = Math.max(0, youtubePlayer?.getDuration() ?? 0);
+          syncActiveVideoDuration();
           updateSegmentDefinitionRuler();
           setPlaybackStatus(mode === "play" ? "Ready · sound on" : "Ready to preview with sound");
           updateGuidedVideoActions();
@@ -2144,7 +2170,7 @@ async function mountPlayerForCurrentView() {
           }
         },
         onStateChange: (event: { data: number }) => {
-          activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer?.getDuration() ?? 0);
+          syncActiveVideoDuration();
           updateSegmentDefinitionRuler();
           if (event.data === 3) setPlaybackStatus("Buffering…");
           if (event.data === 1) {
@@ -2184,7 +2210,7 @@ async function mountPlayerForCurrentView() {
         },
       },
     });
-    loadedVideoId = source.videoId;
+    setLoadedVideoId(source.videoId);
   } catch (error) {
     setPlaybackStatus(error instanceof Error ? error.message : "YouTube player could not be loaded.");
   }
@@ -2193,6 +2219,22 @@ async function mountPlayerForCurrentView() {
 function setPlaybackStatus(status: string) {
   const element = document.querySelector<HTMLElement>(".playback-status, .mix-playback-status");
   if (element) element.textContent = status;
+}
+
+function setLoadedVideoId(videoId: string) {
+  if (loadedVideoId !== videoId) {
+    activeVideoDuration = 0;
+    loadedVideoHasFrame = false;
+    queueMicrotask(updateSegmentDefinitionRuler);
+  }
+  loadedVideoId = videoId;
+}
+
+function syncActiveVideoDuration() {
+  if (!youtubePlayer || !loadedVideoId) return;
+  const playerVideoId = youtubePlayer.getVideoData().video_id;
+  if (playerVideoId !== loadedVideoId) return;
+  activeVideoDuration = Math.max(activeVideoDuration, youtubePlayer.getDuration() || 0);
 }
 
 function previewSegment() {
@@ -2211,7 +2253,7 @@ function previewSegment() {
   message = "";
   pauseWhenFrameAvailable = false;
   bufferedArrangementSegmentId = null;
-  loadedVideoId = source.videoId;
+  setLoadedVideoId(source.videoId);
   previewStopAtEnd = endValue;
   youtubePlayer.loadVideoById({ videoId: source.videoId, startSeconds: startValue });
   setPlaybackStatus("Playing clip with sound");
@@ -2757,7 +2799,7 @@ function playActiveSegment() {
     return;
   }
   bufferedArrangementSegmentId = segment.id;
-  loadedVideoId = source.videoId;
+  setLoadedVideoId(source.videoId);
   youtubePlayer.loadVideoById({
     videoId: source.videoId,
     startSeconds: sourceTimestamp,
@@ -2886,9 +2928,13 @@ function tick() {
   if (nextIndex !== activePlaybackIndex) {
     const previousIndex = activePlaybackIndex;
     activePlaybackIndex = nextIndex;
-    updateActiveTimelineMoment();
-    pausedAt = segmentStart(nextIndex);
+    // Keep the arrangement clock and fixed Head authoritative while the player
+    // changes sources. Resetting to the exact boundary made the timeline jump
+    // backwards, and returning before updatePlayUi left it there for the most
+    // visible part of a video swap (while the new iframe source buffered).
+    pausedAt = elapsed;
     playStartedAt = performance.now();
+    updatePlayUi(elapsed);
     if (segmentsPlayContinuously(previousIndex, nextIndex)) {
       updateActiveMomentUi(project.segments[nextIndex]);
       animationFrame = requestAnimationFrame(tick);
