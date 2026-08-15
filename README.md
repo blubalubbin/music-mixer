@@ -43,6 +43,15 @@ flowchart LR
 
 Start with a GitHub Pages-compatible front-end prototype that supports pasted YouTube URLs, nine saved sources, segment start/end editing, a two-lane timeline, and approximate sequenced playback. Add in-app YouTube search after the interaction model and live-player behavior have been tested.
 
+## Development
+
+```sh
+npm install
+npm run dev
+```
+
+`npm run build` creates the static production bundle in `dist/`.
+
 ## Status
 
-Concept documented. No application code has been implemented yet.
+Phase 0 is underway. The first working prototype includes the three-mode shell, nine locally saved YouTube source references, segment creation and validation, a reorderable two-lane arrangement, keyboard source selection, and deterministic sequential mock playback. Live YouTube player integration is the next provider milestone.
