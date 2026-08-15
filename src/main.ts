@@ -46,6 +46,9 @@ let loadedVideoHasFrame = false;
 let bufferedArrangementSegmentId: string | null = null;
 let pauseWhenFrameAvailable = false;
 let arrangementPlaybackTransitioning = false;
+let arrangementWaitingForVideo = false;
+let lastArrangementVideoTime: number | null = null;
+let lastArrangementVideoProgressAt = 0;
 let frameBufferingEnabled = localStorage.getItem(FRAME_BUFFERING_KEY) !== "off";
 type PanZoomMode = "dynamic" | "gesture";
 const savedPanZoomMode = localStorage.getItem(DYNAMIC_PAN_ZOOM_KEY);
@@ -77,6 +80,8 @@ const TIMELINE_ZOOM_OUT_RANGE = 2; // allow twice the fit-to-screen seconds per 
 const ADJACENT_PAIR_TRACK_BUDGET = 0.5;
 const CONTIGUOUS_SOURCE_EPSILON_SECONDS = 0.05;
 const BUFFERED_FRAME_MATCH_TOLERANCE_SECONDS = 0.75;
+const ARRANGEMENT_VIDEO_STALL_MS = 900;
+const ARRANGEMENT_VIDEO_PROGRESS_EPSILON_SECONDS = 0.03;
 let timelineHeadLocked = true;
 let initialTimelineFramed = false;
 let arrangementScrollLeft = 0;
@@ -2095,8 +2100,49 @@ function activeSegmentAt(elapsed: number) {
   return undefined;
 }
 
+function resetArrangementVideoWatchdog() {
+  lastArrangementVideoTime = youtubePlayer?.getCurrentTime() ?? null;
+  lastArrangementVideoProgressAt = performance.now();
+}
+
+function pauseArrangementClockForVideo(status = "Waiting for YouTube playback…") {
+  if (!playing || arrangementWaitingForVideo) return;
+  pausedAt = currentElapsed();
+  arrangementWaitingForVideo = true;
+  updatePlayUi(pausedAt);
+  updatePerformanceLabel("Waiting for YouTube", false);
+  setPlaybackStatus(status);
+}
+
+function resumeArrangementClockFromVideo() {
+  if (!playing || !arrangementWaitingForVideo) return;
+  arrangementWaitingForVideo = false;
+  playStartedAt = performance.now();
+  resetArrangementVideoWatchdog();
+  updatePerformanceLabel("Playing", true);
+  setPlaybackStatus("Playing with sound");
+}
+
+function observeArrangementVideoProgress() {
+  if (!playing || !youtubePlayer || !playerReady || !sourceVideoPlaying) return;
+  const now = performance.now();
+  const videoTime = youtubePlayer.getCurrentTime();
+  if (lastArrangementVideoTime === null
+    || Math.abs(videoTime - lastArrangementVideoTime) >= ARRANGEMENT_VIDEO_PROGRESS_EPSILON_SECONDS) {
+    lastArrangementVideoTime = videoTime;
+    lastArrangementVideoProgressAt = now;
+    if (arrangementWaitingForVideo) resumeArrangementClockFromVideo();
+    return;
+  }
+  if (!arrangementWaitingForVideo && now - lastArrangementVideoProgressAt >= ARRANGEMENT_VIDEO_STALL_MS) {
+    pauseArrangementClockForVideo();
+  }
+}
+
 function currentElapsed() {
-  return playing ? Math.min(totalDuration(project.segments), pausedAt + (performance.now() - playStartedAt) / 1000) : pausedAt;
+  return playing && !arrangementWaitingForVideo
+    ? Math.min(totalDuration(project.segments), pausedAt + (performance.now() - playStartedAt) / 1000)
+    : pausedAt;
 }
 
 function loadYouTubeApi() {
@@ -2172,7 +2218,10 @@ async function mountPlayerForCurrentView() {
         onStateChange: (event: { data: number }) => {
           syncActiveVideoDuration();
           updateSegmentDefinitionRuler();
-          if (event.data === 3) setPlaybackStatus("Buffering…");
+          if (event.data === 3) {
+            if (playing) pauseArrangementClockForVideo("Buffering…");
+            else setPlaybackStatus("Buffering…");
+          }
           if (event.data === 1) {
             if (playing) applyActivePlaybackRate();
             loadedVideoHasFrame = true;
@@ -2186,9 +2235,11 @@ async function mountPlayerForCurrentView() {
             }
             arrangementPlaybackTransitioning = false;
             sourceVideoPlaying = true;
+            if (playing && arrangementWaitingForVideo) resumeArrangementClockFromVideo();
+            else if (playing) resetArrangementVideoWatchdog();
             if (mode === "mix") animateSegmentDefinition();
             if (previewStopAtEnd !== null) monitorPreviewEnd();
-            setPlaybackStatus(captureSlot === null ? "Playing with sound" : `Recording source ${captureSlot}`);
+            if (!arrangementWaitingForVideo) setPlaybackStatus(captureSlot === null ? "Playing with sound" : `Recording source ${captureSlot}`);
           }
           if (event.data === 0 || event.data === 2) {
             sourceVideoPlaying = false;
@@ -2204,6 +2255,7 @@ async function mountPlayerForCurrentView() {
         },
         onError: (event: { data: number }) => {
           arrangementPlaybackTransitioning = false;
+          arrangementWaitingForVideo = false;
           playing = false;
           cancelAnimationFrame(animationFrame);
           setPlaybackStatus(`This video cannot be played here (error ${event.data}).`);
@@ -2799,6 +2851,9 @@ function playActiveSegment() {
     return;
   }
   bufferedArrangementSegmentId = segment.id;
+  sourceVideoPlaying = false;
+  lastArrangementVideoTime = null;
+  lastArrangementVideoProgressAt = performance.now();
   setLoadedVideoId(source.videoId);
   youtubePlayer.loadVideoById({
     videoId: source.videoId,
@@ -2865,6 +2920,7 @@ function toggleArrangementPlayback() {
 
 function pauseTimelineFromVideoPlayer() {
   pausedAt = currentElapsed();
+  arrangementWaitingForVideo = false;
   playing = false;
   cancelAnimationFrame(animationFrame);
   activePlaybackIndex = findSegmentIndex(pausedAt);
@@ -2882,6 +2938,7 @@ function updatePlaybackButtons() {
 function togglePlayback() {
   if (playing) {
     pausedAt = currentElapsed();
+    arrangementWaitingForVideo = false;
     playing = false;
     updateActiveTimelineMoment();
     cancelAnimationFrame(animationFrame);
@@ -2893,8 +2950,10 @@ function togglePlayback() {
   }
   if (pausedAt >= totalDuration(project.segments)) pausedAt = 0;
   activePlaybackIndex = findSegmentIndex(pausedAt);
+  arrangementWaitingForVideo = false;
   playing = true;
   playStartedAt = performance.now();
+  resetArrangementVideoWatchdog();
   if (playerReady) playActiveSegment();
   updatePlaybackButtons();
   updateActiveTimelineMoment();
@@ -2912,8 +2971,10 @@ function updatePerformanceLabel(label: string, live: boolean) {
 
 function tick() {
   if (!playing) return;
+  observeArrangementVideoProgress();
   const elapsed = currentElapsed();
   if (elapsed >= totalDuration(project.segments)) {
+    arrangementWaitingForVideo = false;
     playing = false;
     updateActiveTimelineMoment();
     pausedAt = totalDuration(project.segments);
@@ -2942,6 +3003,7 @@ function tick() {
     }
     if (segmentsUseSameVideo(previousIndex, nextIndex)) {
       youtubePlayer?.seekTo(project.segments[nextIndex].sourceStartSeconds, true);
+      resetArrangementVideoWatchdog();
       applyActivePlaybackRate();
       youtubePlayer?.playVideo();
       updateActiveMomentUi(project.segments[nextIndex]);
@@ -2967,6 +3029,7 @@ function findSegmentIndex(elapsed: number) {
 }
 
 function stopPlayback() {
+  arrangementWaitingForVideo = false;
   playing = false;
   pausedAt = 0;
   activePlaybackIndex = -1;
