@@ -704,9 +704,20 @@ function beginTimelinePan(event: PointerEvent) {
   const gestureZoomBounds = timelineZoomBounds(tracks);
   lastTimelinePanSeekAt = -Infinity;
   let lastClientX = event.clientX;
+  let lastClientY = event.clientY;
+  let visualPanRoll = 0;
+  let visualZoomRoll = 0;
   const headViewportX = timelineHeadViewportX(tracks);
   let dragging = false;
   let gestureMode: "pan" | "zoom" | null = null;
+  let activeDialOriginX = event.clientX;
+  let activeDialOriginY = event.clientY;
+  let perpendicularOriginX = event.clientX;
+  let perpendicularOriginY = event.clientY;
+  let previousActiveControlTravel = 0;
+  let dotTracksPerpendicular = true;
+  let controlEngaged = false;
+  let dialContractionSuppressed = false;
   let directionRearmed = false;
   let zoomAnchorElapsed = panDuringPlayback ? currentElapsed() : pausedAt;
   let gestureIndicator: HTMLDivElement | null = null;
@@ -722,8 +733,34 @@ function beginTimelinePan(event: PointerEvent) {
     const originDistance = Math.hypot(horizontalTravel, verticalDistance);
     const zoomIntent = verticalDistance / Math.max(1, horizontalTravel + verticalDistance);
     let nextGestureMode = gestureMode;
-    const activeAxisDistance = gestureMode === "pan" ? horizontalTravel : verticalDistance;
-    if (panZoomMode === "gesture" && gestureMode && activeAxisDistance <= gestureCrossoverRadius) {
+    let activeDialDeltaX = moveEvent.clientX - activeDialOriginX;
+    let activeDialDeltaY = moveEvent.clientY - activeDialOriginY;
+    const activeAxisDistance = Math.abs(gestureMode === "pan" ? activeDialDeltaX : activeDialDeltaY);
+    if (panZoomMode === "gesture" && controlEngaged && activeAxisDistance < 30) {
+      // Treat re-entry as a fresh press: discard the previous axis and make
+      // this pointer position the local origin for the next wall crossing.
+      activeDialOriginX = moveEvent.clientX;
+      activeDialOriginY = moveEvent.clientY;
+      perpendicularOriginX = moveEvent.clientX;
+      perpendicularOriginY = moveEvent.clientY;
+      activeDialDeltaX = 0;
+      activeDialDeltaY = 0;
+      previousActiveControlTravel = 0;
+      dotTracksPerpendicular = true;
+      controlEngaged = false;
+      dialContractionSuppressed = false;
+      directionRearmed = true;
+      nextGestureMode = null;
+    } else if (panZoomMode === "gesture" && directionRearmed) {
+      const reachedHorizontalWall = Math.abs(activeDialDeltaX) >= 30;
+      const reachedVerticalWall = Math.abs(activeDialDeltaY) >= 30;
+      if (reachedHorizontalWall || reachedVerticalWall) {
+        nextGestureMode = reachedVerticalWall && Math.abs(activeDialDeltaY) > Math.abs(activeDialDeltaX)
+          ? "zoom"
+          : "pan";
+        directionRearmed = false;
+      }
+    } else if (panZoomMode === "gesture" && gestureMode && activeAxisDistance <= gestureCrossoverRadius) {
       directionRearmed = true;
       if (gestureMode === "pan" && zoomIntent >= 0.6) nextGestureMode = "zoom";
       else if (gestureMode === "zoom" && zoomIntent <= 0.4) nextGestureMode = "pan";
@@ -735,46 +772,118 @@ function beginTimelinePan(event: PointerEvent) {
       else if (zoomIntent <= 0.4) nextGestureMode = "pan";
       if (nextGestureMode) directionRearmed = false;
     }
+    if (nextGestureMode && nextGestureMode !== gestureMode) {
+      // A re-armed gesture already has the correct origin at the dead-zone
+      // centre. Preserve it so touching the wall engages immediately.
+      if (gestureMode !== null) {
+        activeDialOriginX = moveEvent.clientX;
+        activeDialOriginY = moveEvent.clientY;
+        perpendicularOriginX = moveEvent.clientX;
+        perpendicularOriginY = moveEvent.clientY;
+      }
+      previousActiveControlTravel = 0;
+      dotTracksPerpendicular = true;
+      controlEngaged = false;
+      dialContractionSuppressed = false;
+    }
+    activeDialDeltaX = moveEvent.clientX - activeDialOriginX;
+    activeDialDeltaY = moveEvent.clientY - activeDialOriginY;
+    const activeControlTravel = Math.abs(nextGestureMode === "zoom" ? activeDialDeltaY : activeDialDeltaX);
+    const nextControlEngaged = panZoomMode !== "gesture" || Boolean(nextGestureMode && activeControlTravel >= 30);
+    const panStartScrollLeft = Math.max(0, timelineContentOrigin(tracks) - headViewportX);
+    const panEndScrollLeft = Math.max(
+      panStartScrollLeft,
+      timelineContentOrigin(tracks) + timelinePosition(totalDuration(project.segments)) - headViewportX
+    );
+    const activeControlAtLimit = nextGestureMode === "zoom"
+      ? (activeDialDeltaY < 0
+          ? timelineZoom >= gestureZoomBounds.max
+          : timelineZoom <= gestureZoomBounds.min)
+      : nextGestureMode === "pan"
+        ? (activeDialDeltaX < 0
+            ? tracks.scrollLeft >= panEndScrollLeft - 0.01
+            : tracks.scrollLeft <= panStartScrollLeft + 0.01)
+        : false;
+    if (nextControlEngaged && !controlEngaged) {
+      // Suppress contraction only when this engagement begins at a limit.
+      // Reaching a limit after an ordinary engagement keeps the dial narrow.
+      dialContractionSuppressed = activeControlAtLimit;
+    }
+    if (panZoomMode === "gesture" && controlEngaged && !nextControlEngaged) {
+      activeDialOriginX = moveEvent.clientX;
+      activeDialOriginY = moveEvent.clientY;
+      perpendicularOriginX = moveEvent.clientX;
+      perpendicularOriginY = moveEvent.clientY;
+      activeDialDeltaX = 0;
+      activeDialDeltaY = 0;
+    }
     if (panZoomMode === "gesture") {
       if (!gestureIndicator) {
         gestureIndicator = document.createElement("div");
         gestureIndicator.className = "gesture-direction-dial hidden";
-        gestureIndicator.innerHTML = '<span class="dial-stage"><i class="dial-wheel pan-wheel"></i><i class="dial-wheel zoom-wheel"></i><b class="dial-origin-dot"></b></span><em></em>';
+        gestureIndicator.innerHTML = '<span class="dial-stage"><i class="dial-surface"></i><b class="dial-origin-dot"></b></span><em></em>';
         document.body.append(gestureIndicator);
       }
       const displayedGestureMode = nextGestureMode ?? gestureMode;
       gestureIndicator.classList.toggle("hidden", displayedGestureMode === null && !directionRearmed);
       gestureIndicator.classList.toggle("zooming", displayedGestureMode === "zoom");
       gestureIndicator.classList.toggle("panning", displayedGestureMode === "pan");
+      gestureIndicator.classList.toggle("engaged", nextControlEngaged);
+      gestureIndicator.classList.toggle("at-limit", activeControlAtLimit);
+      gestureIndicator.classList.toggle("wall-left", nextControlEngaged && displayedGestureMode === "pan" && activeDialDeltaX < 0);
+      gestureIndicator.classList.toggle("wall-right", nextControlEngaged && displayedGestureMode === "pan" && activeDialDeltaX >= 0);
+      gestureIndicator.classList.toggle("wall-top", nextControlEngaged && displayedGestureMode === "zoom" && activeDialDeltaY < 0);
+      gestureIndicator.classList.toggle("wall-bottom", nextControlEngaged && displayedGestureMode === "zoom" && activeDialDeltaY >= 0);
       const nearingSwitch = Boolean(gestureMode) && activeAxisDistance <= 38;
       gestureIndicator.classList.toggle("switching", nearingSwitch || directionRearmed);
-      const panRoll = (moveEvent.clientX - originX) * 0.8;
-      const zoomRoll = (moveEvent.clientY - originY) * 0.8;
       const originIntensity = Math.max(0.12, Math.min(1, 1 - originDistance / 260));
       gestureIndicator.style.setProperty("--origin-intensity", originIntensity.toFixed(2));
-      const dotX = displayedGestureMode === "zoom"
-        ? Math.max(-10, Math.min(10, panRoll * 0.25))
-        : Math.max(-30, Math.min(30, panRoll));
-      const dotY = displayedGestureMode === "pan"
-        ? Math.max(-10, Math.min(10, zoomRoll * 0.25))
-        : Math.max(-30, Math.min(30, zoomRoll));
+      const activeDotX = Math.max(-30, Math.min(30, displayedGestureMode === "zoom"
+        ? moveEvent.clientX - perpendicularOriginX
+        : activeDialDeltaX));
+      const activeDotY = Math.max(-30, Math.min(30, displayedGestureMode === "pan"
+        ? moveEvent.clientY - perpendicularOriginY
+        : activeDialDeltaY));
+      if (activeControlTravel <= 10) dotTracksPerpendicular = true;
+      else if (
+        activeControlTravel > 30
+        && activeControlTravel < previousActiveControlTravel - 0.25
+      ) dotTracksPerpendicular = false;
+      previousActiveControlTravel = activeControlTravel;
+      const activeDialThickness = activeControlTravel <= 30 || dialContractionSuppressed
+        ? 70
+        : 70 - 58 * Math.min(1, (activeControlTravel - 30) / 55);
+      gestureIndicator.style.setProperty("--active-dial-thickness", `${activeDialThickness.toFixed(1)}px`);
+      const perpendicularLimit = Math.max(0, activeDialThickness / 2 - 5);
+      let dotX = activeDotX;
+      let dotY = activeDotY;
+      if (nextControlEngaged && displayedGestureMode === "zoom") {
+        dotX = dotTracksPerpendicular
+          ? Math.max(-perpendicularLimit, Math.min(perpendicularLimit, activeDotX))
+          : 0;
+      } else if (nextControlEngaged && displayedGestureMode === "pan") {
+        dotY = dotTracksPerpendicular
+          ? Math.max(-perpendicularLimit, Math.min(perpendicularLimit, activeDotY))
+          : 0;
+      }
       gestureIndicator.style.setProperty("--dot-x", `${dotX}px`);
       gestureIndicator.style.setProperty("--dot-y", `${dotY}px`);
       if (nextGestureMode === "pan") {
-        gestureIndicator.style.setProperty("--pan-roll", `${panRoll}px`);
-        gestureIndicator.style.setProperty("--pan-origin-offset", `${Math.max(-30, Math.min(30, panRoll))}px`);
-        gestureIndicator.style.setProperty("--pan-cross-offset", `${Math.max(-10, Math.min(10, zoomRoll * 0.25))}px`);
+        gestureIndicator.style.setProperty("--pan-roll", `${visualPanRoll}px`);
       } else if (nextGestureMode === "zoom") {
-        gestureIndicator.style.setProperty("--zoom-roll", `${zoomRoll}px`);
-        gestureIndicator.style.setProperty("--zoom-origin-offset", `${Math.max(-30, Math.min(30, zoomRoll))}px`);
-        gestureIndicator.style.setProperty("--zoom-cross-offset", `${Math.max(-10, Math.min(10, panRoll * 0.25))}px`);
+        gestureIndicator.style.setProperty("--zoom-roll", `${visualZoomRoll}px`);
       }
       gestureIndicator.style.left = `${Math.max(8, Math.min(window.innerWidth - 104, moveEvent.clientX + 14))}px`;
       gestureIndicator.style.top = `${Math.max(8, Math.min(window.innerHeight - 104, moveEvent.clientY - 48))}px`;
       const readout = gestureIndicator.querySelector("em");
-      if (readout) readout.textContent = nearingSwitch || directionRearmed
-        ? `${displayedGestureMode === "zoom" ? "Zoom" : "Pan"} · Switch`
-        : nextGestureMode === "zoom" ? "Zoom" : "Pan";
+      if (readout) {
+        let directionLabel = "Zoom or Pan";
+        if (displayedGestureMode === "zoom") directionLabel = activeDialDeltaY < 0 ? "Zooming In" : "Zooming Out";
+        else if (displayedGestureMode === "pan") directionLabel = activeDialDeltaX < 0 ? "Later" : "Earlier";
+        readout.textContent = activeControlAtLimit && displayedGestureMode
+          ? "Limit reached"
+          : directionLabel;
+      }
     }
     if (nextGestureMode !== gestureMode && nextGestureMode === "zoom") {
       zoomAnchorElapsed = panDuringPlayback
@@ -787,29 +896,60 @@ function beginTimelinePan(event: PointerEvent) {
       tracks.classList.remove("head-unlocked", "playback-pan");
       centerArrangementOnElapsed(zoomAnchorElapsed);
     } else if (nextGestureMode !== gestureMode && nextGestureMode === "pan" && panDuringPlayback) {
-      timelinePanActive = true;
-      timelineHeadLocked = false;
-      tracks.classList.add("head-unlocked");
+      timelinePanActive = false;
+      timelineHeadLocked = true;
+      tracks.classList.remove("head-unlocked", "playback-pan");
+      centerArrangementOnElapsed(currentElapsed());
     } else if (nextGestureMode !== gestureMode && nextGestureMode === null) {
       timelinePanActive = false;
       timelineHeadLocked = true;
       tracks.classList.remove("head-unlocked", "playback-pan");
       centerArrangementOnElapsed(panDuringPlayback ? currentElapsed() : pausedAt);
     }
+    if (panZoomMode === "gesture" && nextControlEngaged !== controlEngaged) {
+      if (nextControlEngaged && nextGestureMode === "zoom") {
+        gestureOriginZoom = timelineZoom;
+        gestureOriginY = moveEvent.clientY;
+      } else if (panDuringPlayback && nextControlEngaged && nextGestureMode === "pan") {
+        timelinePanActive = true;
+        timelineHeadLocked = false;
+        tracks.classList.add("head-unlocked");
+      } else if (panDuringPlayback && !nextControlEngaged) {
+        timelinePanActive = false;
+        timelineHeadLocked = true;
+        tracks.classList.remove("head-unlocked", "playback-pan");
+        centerArrangementOnElapsed(currentElapsed());
+      }
+    }
+    controlEngaged = nextControlEngaged;
     gestureMode = nextGestureMode;
-    const panGestureActive = panZoomMode !== "gesture" || gestureMode === "pan";
+    const panGestureActive = panZoomMode !== "gesture" || (gestureMode === "pan" && controlEngaged);
     tracks.classList.add("panning");
     tracks.classList.toggle("playback-pan", panDuringPlayback && panGestureActive);
-    if (panGestureActive) tracks.scrollLeft -= moveEvent.clientX - lastClientX;
+    const pointerDeltaX = moveEvent.clientX - lastClientX;
+    const pointerDeltaY = moveEvent.clientY - lastClientY;
+    if (panGestureActive) {
+      const previousScrollLeft = tracks.scrollLeft;
+      tracks.scrollLeft = Math.max(
+        panStartScrollLeft,
+        Math.min(panEndScrollLeft, previousScrollLeft - pointerDeltaX)
+      );
+      const appliedPointerDelta = previousScrollLeft - tracks.scrollLeft;
+      visualPanRoll += appliedPointerDelta * 0.8;
+      gestureIndicator?.style.setProperty("--pan-roll", `${visualPanRoll}px`);
+    }
     lastClientX = moveEvent.clientX;
+    lastClientY = moveEvent.clientY;
     const ghostClientX = tracks.getBoundingClientRect().left + tracks.clientWidth / 2;
     const anchorElapsed = gestureMode === "zoom" ? zoomAnchorElapsed : elapsedAtTimelinePointer(tracks, ghostClientX);
-    if (panZoomMode === "gesture" && gestureMode === "zoom") {
+    if (panZoomMode === "gesture" && gestureMode === "zoom" && controlEngaged) {
       const zoomRange = Math.max(1, gestureZoomBounds.max / Math.max(0.1, gestureZoomBounds.min));
       const verticalTravel = (gestureOriginY - moveEvent.clientY) / 240;
       const gestureZoom = gestureOriginZoom * Math.exp(Math.log(zoomRange) * verticalTravel);
       const nextZoom = clampTimelineZoom(gestureZoom, tracks);
       if (nextZoom !== timelineZoom) {
+        visualZoomRoll += pointerDeltaY * 0.8;
+        gestureIndicator?.style.setProperty("--zoom-roll", `${visualZoomRoll}px`);
         timelineZoom = nextZoom;
         preferredTimelineZoom = timelineZoom;
         applyTimelineZoomInPlace(tracks, zoomAnchorElapsed);
@@ -845,7 +985,7 @@ function beginTimelinePan(event: PointerEvent) {
     suppressNextTimelineSeek = true;
     window.setTimeout(() => { suppressNextTimelineSeek = false; }, 350);
     if (panDuringPlayback && playing) {
-      if (panZoomMode === "gesture" && gestureMode !== "pan") {
+      if (panZoomMode === "gesture" && (gestureMode !== "pan" || !controlEngaged)) {
         updatePlayUi(currentElapsed());
         return;
       }
@@ -1722,6 +1862,30 @@ function syncTimelineGutters(tracks: HTMLElement) {
   const right = Math.max(0, tracks.clientWidth - headX - outerRight);
   tracks.style.setProperty("--timeline-gutter-left", `${left}px`);
   tracks.style.setProperty("--timeline-gutter-right", `${right}px`);
+
+  const missingStartTravel = Math.max(
+    0,
+    timelineHeadViewportX(tracks) - timelineContentOrigin(tracks)
+  );
+  if (missingStartTravel > 0.01) {
+    tracks.style.setProperty("--timeline-gutter-left", `${left + missingStartTravel}px`);
+  }
+
+  // CSS grid sizing and scrollbar rounding can leave the theoretical final
+  // Head-aligned position just beyond the browser's actual scroll range. Add
+  // precisely the missing trailing space so both musical endpoints can
+  // physically reach the Head.
+  const desiredEndScrollLeft = Math.max(
+    0,
+    timelineContentOrigin(tracks)
+      + timelinePosition(totalDuration(project.segments))
+      - timelineHeadViewportX(tracks)
+  );
+  const maximumScrollLeft = Math.max(0, tracks.scrollWidth - tracks.clientWidth);
+  const missingEndTravel = Math.max(0, desiredEndScrollLeft - maximumScrollLeft);
+  if (missingEndTravel > 0.01) {
+    tracks.style.setProperty("--timeline-gutter-right", `${right + missingEndTravel}px`);
+  }
 }
 
 function timelineHeadViewportX(tracks: HTMLElement) {
